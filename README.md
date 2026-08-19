@@ -87,12 +87,11 @@ holds whatever the link negotiates. The frames arrived as JPEG from the
 organizer's camera server in the first place, so this is a second generation of
 the same artefacts. `--jpeg-quality 0` sends raw; the server accepts either.
 
-It is not a free win, which is why it stays a flag: encode plus decode is about
-55 ms end to end whatever the link, so on a gigabit link raw is roughly 34 ms
-faster and on a 100 Mb/s link JPEG is roughly 154 ms faster. The loss is
-asymmetric — being wrong about gigabit costs 34 ms that the chunk sizing
-absorbs, being wrong about 100 Mb/s costs a robot that barely moves — so JPEG
-is the default until the bench link is known.
+Measured on the Orin rather than estimated: 56 KB per observation, 7-10 ms to
+encode all three frames. That is cheap enough that JPEG wins at any link speed
+— about 12 ms end to end on gigabit against ~22 ms for raw, and ~15 ms against
+~330 ms at 100 Mb/s. An earlier version of this file said raw would be faster
+on gigabit; that was arithmetic on an encode cost three times the real one.
 
 **No gripper state is published, and none can be.** The Dex1-1 rig means
 `:5557` carries no hand vector — and `boundary/states.py` types the optional
@@ -175,4 +174,6 @@ bench rather than assuming.
 - [x] Both pushed to `ghcr.io/rooibost/` and their digests written into
       `manifest.yaml`
 - [x] Peak GPU memory measured on the Thor: 6.10 GiB reserved, declared 8 GB
-- [ ] Closed-loop run against the real checkpoint
+- [x] Closed loop: the real checkpoint on the Thor driving the Orin client,
+      both from the pushed digest images — 185 ms round trip, 320-340 ms of
+      motion published per cycle (`docs/integration_thor_orin.log`)

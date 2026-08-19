@@ -149,6 +149,12 @@ control:
   model_horizon_rows: 40          # 1.33 s of trajectory at 30 Hz
   executed_rows_per_inference: 16 # 0.5 s of trajectory, then replan
   published_row_hz: 50            # model rows resampled in joint space
+  measured_round_trip_ms: 190     # Orin client -> Thor -> chunk in hand, closed
+                                  # loop from the digest images: 184-199 ms
+                                  # against 182-187 ms of inference, so the link
+                                  # adds about 10 ms. 320-340 ms of motion
+                                  # published per cycle, ~150 ms ahead of the
+                                  # next inference. docs/integration_thor_orin.log
   measured_inference_ms: 185      # on our Thor, in this image: 182/184/187 after
                                   # a 1224 ms warmup. PyTorch eager, 4 denoising
                                   # steps, batch 1, three 480x640 views.

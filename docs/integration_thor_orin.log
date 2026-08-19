@@ -1,0 +1,36 @@
+# Closed loop: the real checkpoint on the Thor driving the Orin client, both
+# from the pushed digest images, against the mocks. Transcribed from the
+# client's console.
+#
+#   Thor  ghcr.io/rooibost/manipurl-thor@sha256:6cf2039c06ec...  (JetPack 7.1)
+#   Orin  ghcr.io/rooibost/manipurl-orin@sha256:44015fc48016...  (L4T R35.3.1)
+#   link  192.168.123.x through the robot switch, negotiated 100 Mb/s on the
+#         Thor side -- the slow case, deliberately not fixed before measuring
+#   mocks mock_orin --stereo-ego --fps 30, mock_wbc --lane decoupled
+#
+# The cameras are synthetic patterns, so the policy's behaviour means nothing
+# here. What this measures is wiring, framing, and timing.
+
+[client] chunk T=26 latency=190ms skip=10 publish=16 rows (320ms of motion) | obs 56KB encoded in 10ms
+[client] chunk T=26 latency=186ms skip=9  publish=17 rows (340ms of motion) | obs 57KB encoded in 8ms
+[client] chunk T=26 latency=194ms skip=10 publish=16 rows (320ms of motion) | obs 51KB encoded in 7ms
+[client] chunk T=26 latency=199ms skip=10 publish=16 rows (320ms of motion) | obs 57KB encoded in 7ms
+[client] chunk T=26 latency=185ms skip=9  publish=17 rows (340ms of motion) | obs 56KB encoded in 7ms
+[client] chunk T=26 latency=184ms skip=9  publish=17 rows (340ms of motion) | obs 56KB encoded in 7ms
+
+# Reading it:
+#
+#   latency 184-199 ms against the 182-187 ms the same checkpoint takes on the
+#   Thor alone (docs/contract_check_thor.log). Everything the link adds --
+#   encode, transfer, decode, msgpack, websocket framing -- is about 10 ms.
+#
+#   320-340 ms of motion published per 185 ms cycle. The chunk outlasts the
+#   next inference with ~150 ms to spare, so the controller never runs dry.
+#   That is what --execute-rows 16 was sized for, now measured rather than
+#   calculated.
+#
+#   56 KB per observation against 2.76 MB raw: 49x. Encoding all three frames
+#   costs 7-10 ms on the Orin.
+#
+# Before the JPEG change, on this same link:
+#   [client] chunk T=26 latency=515ms skip=25 publish=1 rows (20ms of motion)

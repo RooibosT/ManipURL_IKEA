@@ -244,10 +244,10 @@ is enough to correct any of them, and none needs a rebuild.
    observation images as JPEG because we cannot see your link: three 480x640x3
    frames are 2.76 MB raw, which is ~22 ms at gigabit but ~221 ms at 100 Mb/s,
    and at 100 Mb/s that alone would leave 1 of our 26 published rows alive.
-   JPEG costs about 55 ms end to end regardless of link speed, so it is the
-   safe default and mildly wasteful on gigabit. If your link is gigabit, add
-   `--jpeg-quality 0` to the client command and we send raw — it is a client
-   flag, so no rebuild.
+   Measured on our Orin, JPEG costs 7-10 ms to encode and lands at 56 KB, so it
+   is the faster option at any link speed we can imagine and we are not asking
+   you to change anything. `--jpeg-quality 0` sends raw if you ever want to
+   compare; it is a client flag, so no rebuild.
 
    (We found this on our own bench, where the Thor's NIC had negotiated
    100 Mb/s on a two-pair cable. Ours, not yours — but it is why we would
