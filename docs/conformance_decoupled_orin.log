@@ -1,0 +1,32 @@
+# Captured on our Jetson Orin NX, inside the built client image.
+# Transcribed from the console of that run.
+#
+#   host:  unitree@ubuntu, aarch64, JetPack 5.1.1 / L4T R35.3.1 (R35 REVISION 3.1)
+#          Ubuntu 20.04.6 focal, Python 3.8 (image), 16 GB unified
+#   image: manipurl-orin:local, built from docker/Dockerfile.orin
+#          base nvcr.io/nvidia/l4t-jetpack:r35.3.1
+#
+# This is the real target hardware. docs/conformance_decoupled_py38.log is the
+# same check under an x86 python:3.8 container, kept because it isolates the
+# interpreter version from the hardware.
+
+$ docker run --rm --network host --entrypoint bash manipurl-orin:local -c \
+    "cd /submission && scripts/check_boundary.sh && python3 conformance.py --lane decoupled"
+boundary/__init__.py: OK
+boundary/actions.py: OK
+boundary/cameras.py: OK
+boundary/states.py: OK
+mocks/mock_orin.py: OK
+mocks/mock_wbc.py: OK
+conformance.py: OK
+requirements.txt: OK
+boundary/ and the organizer's tooling are unmodified.
+conformance: lane=decoupled, need 40 clean messages
+
+[mock-wbc] lane=decoupled connected to tcp://127.0.0.1:5556
+[mock-wbc] ok #1 T=11 age=0.019s
+[mock-wbc] ok #26 T=10 age=0.043s
+[mock-wbc] 40 accepted, 0 rejected
+
+PASS — your client speaks the boundary contract.
+Next: confirm your manifest declares lane 'decoupled', then submit.
