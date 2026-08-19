@@ -1,0 +1,11 @@
+# On top of what Isaac-GR00T's Thor install already brings (numpy, torch,
+# transformers, ...). The server itself never imports boundary/ -- it speaks
+# only our WebSocket link -- but pyzmq and opencv are here so `conformance.py`
+# can be run inside this image when diagnosing a bench failure.
+#
+# headless opencv, not opencv-python: there is no GL stack in this image and the
+# GUI build fails to import without one.
+msgpack
+websockets>=13
+pyzmq
+opencv-python-headless

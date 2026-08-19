@@ -1,0 +1,8 @@
+# The Orin's JetPack 5.1.1 ships Python 3.8, and websockets 14 -- the first
+# release with keepalive on the *sync* API -- requires Python 3.9. We pin below
+# that on purpose and components/transport.py adapts: see the VERSION NOTE
+# there. Do not "fix" this pin by upgrading websockets; it will not install.
+websockets>=13,<14
+msgpack
+pyzmq
+# numpy and opencv come from apt (see Dockerfile.orin) so they stay ABI-matched.
