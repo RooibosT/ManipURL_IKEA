@@ -67,7 +67,7 @@ RUN git lfs install --system \
 
 # Same environment scripts/activate_thor.sh sets up on bare metal.
 ENV VIRTUAL_ENV=/opt/gr00t-venv
-ENV PATH="$VIRTUAL_ENV/bin:/usr/local/cuda/bin:$PATH"
+ENV PATH="$VIRTUAL_ENV/bin:/usr/local/cuda/bin:/root/.local/bin:$PATH"
 ENV TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 ENV CUDA_HOME=/usr/local/cuda-13.0
 ENV CUDA_PATH=/usr/local/cuda-13.0
@@ -78,8 +78,18 @@ ENV LD_LIBRARY_PATH="$VIRTUAL_ENV/lib/python3.12/site-packages/torch/lib:$VIRTUA
 
 # --- boundary + transport deps ----------------------------------------------
 COPY docker/requirements-thor.txt /tmp/requirements-thor.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-thor.txt \
-    && python -c "import cv2, numpy, zmq, msgpack, websockets, torch; print('imports ok:', cv2.__version__, numpy.__version__, torch.__version__)"
+# uv builds the venv without pip in it, so a bare `pip install` here resolves to
+# the SYSTEM interpreter and dies on PEP 668:
+#   error: externally-managed-environment
+# Install with uv, which is what created the venv in the first place, and name
+# the interpreter explicitly rather than trusting PATH order.
+RUN command -v uv > /dev/null || { \
+        echo "uv is not on PATH; install_deps.sh should have installed it"; \
+        exit 1; \
+    } \
+    && uv pip install --python "$VIRTUAL_ENV/bin/python" --no-cache \
+        -r /tmp/requirements-thor.txt \
+    && "$VIRTUAL_ENV/bin/python" -c "import cv2, numpy, zmq, msgpack, websockets, torch; print('imports ok:', cv2.__version__, numpy.__version__, torch.__version__)"
 
 # --- the submission ----------------------------------------------------------
 WORKDIR /submission
