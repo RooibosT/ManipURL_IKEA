@@ -26,7 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv \
         build-essential yasm cmake libtool git git-lfs pkg-config curl ca-certificates \
         libass-dev libfreetype6-dev libvorbis-dev \
-        autoconf automake texinfo ffmpeg
+        autoconf automake texinfo ffmpeg \
+        iproute2
 
 # --- normalise the CUDA apt repo before the installer touches it ------------
 # The base image registers the CUDA repo WITHOUT a Signed-By option.

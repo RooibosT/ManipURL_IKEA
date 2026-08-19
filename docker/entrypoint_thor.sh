@@ -57,6 +57,17 @@ if [ -n "${PEVAL_CHECKPOINT:-}" ] \
     exit 1
 fi
 
+# A previous server still holding the port is a normal thing to do to yourself
+# between attempts, and websockets reports it as a bare OSError from deep inside
+# socket.create_server, 20 seconds after the model has finished loading.
+PORT="${PEVAL_THOR_PORT:-8765}"
+if command -v ss > /dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
+    echo "[entrypoint] FATAL: :${PORT} is already bound. Another policy server is" >&2
+    echo "[entrypoint] still running -- 'docker ps' and stop it, or start this one" >&2
+    echo "[entrypoint] on a different port with -e PEVAL_THOR_PORT=..." >&2
+    exit 1
+fi
+
 CHECKPOINT="${PEVAL_CHECKPOINT:-}"
 if [ -n "$CHECKPOINT" ] && [ ! -f "$CHECKPOINT/config.json" ]; then
     echo "[entrypoint] no checkpoint at $CHECKPOINT (config.json missing)." >&2
