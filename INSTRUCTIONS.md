@@ -17,6 +17,8 @@ carries the same values in machine-readable form.
 | 6 | Conformance log | `docs/conformance_decoupled_orin.log` (on our Orin, inside the built image); `docs/conformance_decoupled.log` and `..._py38.log` are the same check off-hardware |
 | 7 | Run command per container | §1 and §2 below |
 
+Neither container needs internet once the images and weights are staged; see §3.
+
 ---
 
 ## 0 · Before the first run: the weights
@@ -169,7 +171,25 @@ excluded from the finetune on purpose, so `navigate_cmd`, `base_height_cmd` and
 
 ---
 
-## 3 · Order of operations
+## 3 · Neither container needs the network at run time
+
+Everything is staged beforehand, so both containers run on an air-gapped bench:
+
+| Needs network | Once, beforehand |
+|---|---|
+| `docker pull` both images by digest | yes |
+| `hf download` the checkpoint (12.6 GB) | yes |
+| `hf download` the backbone (4.9 GB) | yes |
+
+| Needs no network | At run time |
+|---|---|
+| Thor server | `HF_HUB_OFFLINE=1` with the backbone pre-staged; loads entirely from the mount |
+| Orin client | only local sockets: `:5555`/`:5557` on the Orin itself, `:5556` bound for your controller, and the Thor over the direct link |
+
+We verified the Thor side of this: the run in `docs/contract_check_thor.log`
+loaded the model from a **read-only** mount with `HF_HUB_OFFLINE=1`.
+
+## 4 · Order of operations
 
 1. Your camera and state servers up on the Orin.
 2. Thor container. Wait for `policy server listening on ws://0.0.0.0:8765`.
@@ -184,7 +204,7 @@ its last command. Only your e-stop brings it to a safe state.
 
 ---
 
-## 4 · What we need from you
+## 5 · What we need from you
 
 **Stereo `ego_view_left`, please.** Our server declares
 `["ego_view_left", "left_wrist", "right_wrist"]`. The checkpoint's head view was
@@ -204,7 +224,7 @@ says why every 5 seconds rather than feeding the policy a black frame.
 
 ---
 
-## 5 · Open questions on the decoupled contract
+## 6 · Open questions on the decoupled contract
 
 We had to guess three things. All three are configurable, so a one-line answer
 is enough to correct any of them, and none needs a rebuild.
@@ -269,7 +289,7 @@ could surprise you, so please say so.
 
 ---
 
-## 6 · Verifying what we sent you
+## 7 · Verifying what we sent you
 
 From a checkout:
 
@@ -298,7 +318,7 @@ cameras, which is the closer rehearsal.
 
 ---
 
-## 7 · Building the images (for reference)
+## 8 · Building the images (for reference)
 
 Both are aarch64 and neither cross-builds usefully — build each on its own
 machine:
