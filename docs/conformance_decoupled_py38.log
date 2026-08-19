@@ -1,0 +1,21 @@
+$ uname -srm && python -VV
+Linux 5.15.0-144-generic x86_64
+Python 3.8.20 (default, Sep 27 2024, 06:05:23) 
+[GCC 12.2.0]
+
+$ python -c "import numpy,msgpack,zmq,cv2,websockets; ..."
+numpy 1.24.4 | msgpack (1, 1, 1) | pyzmq 27.1.0 | cv2 5.0.0 | websockets 13.1
+
+$ python conformance.py --lane decoupled
+conformance: lane=decoupled, need 40 clean messages
+
+[mock-wbc] lane=decoupled connected to tcp://127.0.0.1:5556
+[mock-wbc] ok #1 T=11 age=0.012s
+[mock-wbc] ok #26 T=11 age=0.024s
+[mock-wbc] 40 accepted, 0 rejected
+
+PASS — your client speaks the boundary contract.
+Next: confirm your manifest declares lane 'decoupled', then submit.
+
+$ echo $?
+0

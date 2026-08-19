@@ -1,0 +1,121 @@
+# IKEA IROS Assembly Challenge — submission manifest
+# Team ManipURL · Unitree G1 EDU (Dex1-1) · https://github.com/RooibosT/ManipURL_IKEA
+#
+# Everything marked TBD needs a build on the target hardware and is filled by
+# scripts/build_and_push.sh, which writes the digest it gets back from the
+# registry. Nothing else in this file changes at build time.
+
+lane: decoupled
+# Not a preference. Our policy is GR00T N1.7 finetuned under the
+# `new_embodiment` tag and it emits joint targets, not a 64-dim SONIC latent,
+# so `decoupled` is the only lane it can speak. Both components/server.py and
+# components/client.py refuse to start on `sonic` rather than be quietly wrong.
+
+images:
+  thor:
+    role: policy server
+    base_image: nvcr.io/nvidia/cuda:13.0.0-devel-ubuntu24.04
+    # The README's Thor row names this NGC CUDA image rather than an l4t-* tag,
+    # because JetPack 7 uses unified Arm CUDA. That differs from the onboarding
+    # note's "nvcr.io/nvidia/l4t-*" wording; we followed the README, which is
+    # the newer of the two. Say so if you want the l4t-* form instead.
+    target_arch: aarch64
+    target_sm: sm_110          # Blackwell
+    dockerfile: docker/Dockerfile.thor
+    image: TBD                 # <registry>/manipurl-thor
+    digest: TBD                # sha256:...
+    entrypoint:
+      - python
+      - components/server.py
+      - --lane
+      - decoupled
+      - --port
+      - "8765"
+    # Full `docker run` line, including mounts and env: INSTRUCTIONS.md §1.
+
+  orin:
+    role: policy client
+    base_image: nvcr.io/nvidia/l4t-jetpack:r35.3.1
+    # Must match the Orin's installed L4T exactly (R35.3.1 / JetPack 5.1.1) --
+    # the CUDA and driver userspace are mounted from the host at runtime.
+    target_arch: aarch64
+    target_sm: sm_87           # Ampere. The client does no inference; nothing
+                               # in this image is compiled for the GPU.
+    dockerfile: docker/Dockerfile.orin
+    image: TBD                 # <registry>/manipurl-orin
+    digest: TBD                # sha256:...
+    entrypoint:
+      - python3
+      - components/client.py
+      - --lane
+      - decoupled
+      - --thor
+      - 192.168.100.1
+
+# Our Thor <-> Orin link. WebSocket carrying msgpack, entirely inside the
+# submission: the organizer never speaks it. The client dials the Thor.
+thor_orin_port: 8765
+
+weights:
+  uri: hf://RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+  # NOT baked into the image. Mounted read-only at /weights; see INSTRUCTIONS.md.
+  visibility: private
+  access: >-
+    Private Hugging Face repo. We will grant read access to the evaluation
+    team's HF account or hand over a scoped read token before the bench slot --
+    tell us which you prefer. `hf download <repo> --local-dir <dir>` with that
+    token is the whole procedure; there is no other gating.
+  size_gb: 6.9
+  format: GR00T N1.7 safetensors checkpoint (bf16 at load)
+  description: >-
+    GR00T N1.7 finetuned on Dex1 whole-body teleop, embodiment tag
+    `new_embodiment`. 3 camera views, 46-dim state, action horizon 40 at 30 Hz,
+    arms predicted RELATIVE and restored to absolute by the processor, waist and
+    grippers ABSOLUTE. Run at 4 denoising steps -- every open-loop number for
+    this checkpoint was measured there.
+
+# Peak GPU memory we expect on the Thor, of its 128 GB unified pool.
+# Estimate, not yet measured on Thor silicon:
+#   6.9 GB  checkpoint weights, bf16
+#   ~4 GB   activations and workspace, batch 1, 3 views, 4 denoising steps
+#   ~1 GB   CUDA context and allocator slack
+#   ~6 GB   reserved in case we enable the TensorRT path (engines are ~6 GB;
+#           on our Thor deployment TRT cut median inference 226.9 -> 163.3 ms)
+# We will replace this with a measured `torch.cuda.max_memory_reserved()` once
+# the image is built on the Thor.
+peak_gpu_memory_gb: 24
+
+# --- Everything below is context, not a required manifest field -------------
+
+boundary:
+  # Copied verbatim from the template at this commit and never edited.
+  # scripts/check_boundary.sh re-verifies the checksums in docs/boundary.sha256.
+  template_repo: https://github.com/iacevaltest/ikea_iros_submit
+  template_commit: 2ae4eeb5fcbb5794a10357d427a59504849280e5
+
+cameras:
+  # Declared by the server in its metadata frame; the client filters to exactly
+  # these. The checkpoint's `cam_head` was trained on cam_0 of the source
+  # recording, which is the LEFT eye of the head stereo pair -- hence the stereo
+  # key rather than the mono one. THIS NEEDS STEREO ENABLED FOR US; see
+  # INSTRUCTIONS.md, "What we need from you".
+  ego_view_left: cam_head
+  left_wrist: cam_left_wrist
+  right_wrist: cam_right_wrist
+  fallback: >-
+    If stereo is not live for our slot, start the server with
+    --head-camera ego_view. It runs, but on an eye the checkpoint was not
+    trained on, which costs accuracy silently.
+
+control:
+  model_horizon_rows: 40         # 1.33 s of trajectory at 30 Hz
+  executed_rows_per_inference: 8 # ~0.27 s, then replan. Arm MAE by depth:
+                                 # 5 rows 1.20 deg, 8 rows 1.50, 16 rows 2.25,
+                                 # 40 rows 3.98.
+  published_row_hz: 50           # model rows resampled in joint space
+  expected_inference_ms: 165-230 # measured on our own Thor: TRT 163, eager 227
+  locomotion: >-
+    navigate_cmd, base_height_cmd and torso_rpy are published as zeros. The
+    checkpoint predicts no locomotion command, and its `waist` output only
+    imitates the balance controller, so the whole-body controller keeps those
+    degrees of freedom.
