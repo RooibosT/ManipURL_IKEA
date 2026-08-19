@@ -146,6 +146,14 @@ control:
   measured_inference_ms: 185      # on our Thor, in this image: 182/184/187 after
                                   # a 1224 ms warmup. PyTorch eager, 4 denoising
                                   # steps, batch 1, three 480x640 views.
+  observation_encoding: jpeg      # quality 85, --jpeg-quality on the client
+                                  # Three 480x640x3 frames are 2.76 MB raw, and
+                                  # on our own Thor<->Orin link that cost ~330 ms
+                                  # of round trip -- more than the policy itself
+                                  # -- leaving 1 of 26 published rows alive.
+                                  # JPEG takes the observation to roughly a
+                                  # twentieth of that. The server accepts raw
+                                  # arrays too; it is a client-side flag.
   # Why 16 and not 8: the client drops the leading rows that inference latency
   # has already overtaken, and what survives has to last until the next chunk
   # lands. At 185 ms, 8 model rows become 12 published rows, 9 of which are

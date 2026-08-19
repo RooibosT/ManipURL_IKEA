@@ -34,9 +34,15 @@ our code.
 
 NETWORK: the Thor<->Orin link is a direct ethernet cable with static IPs. If
 the client cannot reach the Thor, check `ip link` for a down interface before
-looking at code. Observations carry three 480x640x3 images -- about 2.7 MB
-raw -- at roughly 3.8 Hz, so ~80 Mbit/s on a gigabit link. Comfortable, which
-is why the images go over the wire uncompressed.
+looking at code.
+
+Observations carry three 480x640x3 images, 2.76 MB raw. On our own Thor<->Orin
+link that measured about 330 ms of round trip on top of the policy's own
+185 ms -- enough that the client discarded 25 of every 26 published rows as
+stale. So the images go over the wire as JPEG (--jpeg-quality, default 85),
+which takes the observation to roughly a twentieth of that. The frames were
+JPEG from the organizer's camera server to begin with and `boundary` decoded
+them for us, so this is a second generation of the same artefacts.
 """
 
 from __future__ import annotations
@@ -52,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from boundary import ActionSink, CameraStream, StateStream  # noqa: E402
 from boundary.actions import ActionError  # noqa: E402
+from components.imagecodec import DEFAULT_QUALITY, encode_images  # noqa: E402
 from components.transport import PolicyLink  # noqa: E402
 
 LANE = "decoupled"
@@ -72,12 +79,14 @@ class Inference:
     trying to correct.
     """
 
-    def __init__(self, link, cameras, states, prompt, camera_keys):
+    def __init__(self, link, cameras, states, prompt, camera_keys,
+                 jpeg_quality=DEFAULT_QUALITY):
         self._link = link
         self._cameras = cameras
         self._states = states
         self._prompt = prompt
         self._camera_keys = camera_keys
+        self._jpeg_quality = int(jpeg_quality)
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="infer")
         self._pending = None            # the in-flight Future, or None
         self._missing_warned = set()
@@ -107,13 +116,17 @@ class Inference:
                     "server will reuse its last good frame if it ever had one.".format(key),
                     file=sys.stderr,
                 )
-        return {
-            "images": images,
+        obs = {
             "body_q": state.body_q,
             "base_quat": state.base_quat,
             "prompt": self._prompt,
             "t": frame.received_at,
         }
+        if self._jpeg_quality > 0:
+            obs["images_jpeg"] = encode_images(images, self._jpeg_quality)
+        else:
+            obs["images"] = images
+        return obs
 
     def submit(self) -> bool:
         """Kick off the next inference. False if one is already in flight or
@@ -224,6 +237,10 @@ def main():
                         help="Host of the organizer's camera/state endpoints.")
     parser.add_argument("--prompt", default=os.environ.get("PEVAL_PROMPT", DEFAULT_PROMPT),
                         help="Task instruction handed to the policy.")
+    parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_QUALITY,
+                        help="JPEG quality for the observation images, 1-100. "
+                             "0 sends them raw, which costs about 330ms of round "
+                             "trip on our link. The server accepts either.")
     parser.add_argument("--min-period-s", type=float, default=0.02,
                         help="Floor on the re-query period, so a degenerate "
                              "one-row chunk cannot spin the loop.")
@@ -259,11 +276,13 @@ def main():
 
     row_hz = float(link.metadata.get("action_row_hz", DEFAULT_ROW_HZ))
     camera_keys = link.metadata.get("camera_keys", ["ego_view"])
-    print("[client] server: {} rows @ {:g} Hz, cameras {}".format(
-        link.metadata.get("action_chunk_size"), row_hz, camera_keys))
+    print("[client] server: {} rows @ {:g} Hz, cameras {}, images {}".format(
+        link.metadata.get("action_chunk_size"), row_hz, camera_keys,
+        "jpeg q{}".format(args.jpeg_quality) if args.jpeg_quality > 0 else "raw"))
 
     link.reset()
-    inference = Inference(link, cameras, states, args.prompt, camera_keys)
+    inference = Inference(link, cameras, states, args.prompt, camera_keys,
+                          jpeg_quality=args.jpeg_quality)
     try:
         run_decoupled(inference, sink, row_hz, args.min_period_s)
     except KeyboardInterrupt:

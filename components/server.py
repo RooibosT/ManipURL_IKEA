@@ -52,6 +52,7 @@ from components.policy.bct import (  # noqa: E402
     Gr00tBctPolicy,
     HoldStillPolicy,
 )
+from components.imagecodec import decode_images  # noqa: E402
 from components.policy.kinematics import G1WristKinematics  # noqa: E402
 from components.policy.taskspace import (  # noqa: E402
     GRIPPER_OPEN_RAD,
@@ -201,6 +202,7 @@ class Policy:
             "model_row_hz": self.args.model_row_hz,
             "model_horizon": self.policy.horizon,
             "execute_rows": execute_rows,
+            "accepts_jpeg": True,
             "policy": type(self.policy).__name__,
             "checkpoint": self.args.checkpoint or "<hold-still>",
             "ee_frame": self.args.ee_frame,
@@ -213,7 +215,7 @@ class Policy:
         base_quat = np.asarray(obs["base_quat"], dtype=np.float64)
         prompt = obs.get("prompt", "")
         self._check_prompt(prompt)
-        images, blocked = self._collect_images(obs.get("images", {}))
+        images, blocked = self._collect_images(self._images_from(obs))
 
         if blocked and self.policy.needs_images:
             # A camera the checkpoint needs has never arrived. Hold the measured
@@ -301,6 +303,19 @@ class Policy:
         arm = np.concatenate((body_q[15:22], body_q[22:29]))
         rows = min(self.args.execute_rows, self.policy.horizon)
         return np.tile(arm, (rows, 1)), np.tile(self._gripper_q, (rows, 1))
+
+    @staticmethod
+    def _images_from(obs: dict) -> dict:
+        """Accept either raw arrays or JPEG blobs; the client decides which.
+
+        Raw is simpler and lossless; JPEG is what makes the link fast enough to
+        matter. Supporting both means the choice stays a client flag rather than
+        a rebuild of two images.
+        """
+        blobs = obs.get("images_jpeg")
+        if blobs:
+            return decode_images(blobs)
+        return obs.get("images", {})
 
     def _collect_images(self, images: dict):
         """Fill each declared camera, reusing its newest frame when one drops.
