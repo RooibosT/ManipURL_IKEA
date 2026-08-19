@@ -20,7 +20,7 @@ build, registered under the `new_embodiment` tag:
 | State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12 |
 | Action | horizon 40 at 30 Hz; arms RELATIVE (restored to absolute by the processor), waist and grippers ABSOLUTE |
 | Denoising | 4 steps — every open-loop number for this checkpoint was measured there |
-| Executed | first 8 rows (~0.27 s), then replan |
+| Executed | first 16 rows (0.5 s), then replan — sized against the 185 ms measured on our Thor |
 | Prompts | five subtask strings; see INSTRUCTIONS.md |
 
 Arm MAE against held-out teleop, by how deep into the chunk you execute:
@@ -141,14 +141,12 @@ bench rather than assuming.
       (Orin NX, L4T R35.3.1, Python 3.8); also on x86 Python 3.8 and 3.10
 - [x] Full task-space path — FK, quaternion ordering, gripper mapping — checked
       against `boundary`'s own validator
-- [x] Real checkpoint loaded and inferred through the server's own code path;
-      the checkpoint's declared state, video and action keys match what
-      `policy/bct.py` assumes (`scripts/contract_check.py`,
-      `docs/contract_check.log`)
+- [x] Real checkpoint loaded and inferred **on the Thor, in the built image**,
+      through the server's own code path: contract matches, 185 ms per
+      inference, 6.10 GiB peak (`docs/contract_check_thor.log`)
 - [x] Both images build and run on their own silicon; the Thor image's torch
       carries sm_110 kernels
 - [ ] Both pushed and their digests written into `manifest.yaml`
       (`scripts/build_and_push.sh` does that)
-- [ ] Peak GPU memory re-measured on the Thor (6.10 GiB on an A100; declared
-      12 GB with headroom)
+- [x] Peak GPU memory measured on the Thor: 6.10 GiB reserved, declared 8 GB
 - [ ] Closed-loop run against the real checkpoint

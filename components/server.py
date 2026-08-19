@@ -383,10 +383,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Row spacing the checkpoint was trained at.")
 
     control = parser.add_argument_group("control")
-    control.add_argument("--execute-rows", type=int, default=8,
+    control.add_argument("--execute-rows", type=int, default=16,
                          help="Model rows executed per inference before replanning. "
-                              "Arm MAE by execution depth: 5 rows 1.20 deg, 8 rows "
-                              "1.50 deg, 16 rows 2.25 deg, 40 rows 3.98 deg.")
+                              "Must cover inference latency twice over: the client "
+                              "discards the leading rows that latency already ate, "
+                              "and what is left has to last until the next chunk "
+                              "arrives. At the 185 ms measured on the Thor, 8 rows "
+                              "leaves 3 of 12 alive -- 60 ms of motion per 185 ms "
+                              "cycle, so the controller holds its last command two "
+                              "thirds of the time. 16 rows leaves 17 of 26, i.e. "
+                              "340 ms of motion per cycle. The cost is accuracy "
+                              "deeper into the chunk: arm MAE is 1.20 deg at 5 rows, "
+                              "1.50 at 8, 2.25 at 16, 3.98 at 40.")
     control.add_argument("--row-hz", type=float, default=50.0,
                          help="Row spacing of the published (T, 25) chunk. 50 Hz "
                               "matches the controller cadence; the model's 30 Hz "

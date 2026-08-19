@@ -1,0 +1,49 @@
+# Captured on our Jetson AGX Thor, inside the built server image, against the
+# real checkpoint. Transcribed from the console of that run; the transformers
+# and albumentations warnings are elided.
+#
+#   host:   url@localhost, JetPack 7.1-b112 / L4T R38.4, CUDA 13.0, 122 GB unified
+#   image:  manipurl-thor:local (docker/Dockerfile.thor), torch 2.10.0, sm_110
+#   run:    docker run --rm --runtime nvidia --network host \
+#             -v /opt/weights:/weights:ro \
+#             -e HF_HOME=/weights/hf-cache -e HF_HUB_OFFLINE=1 \
+#             --entrypoint python manipurl-thor:local \
+#             /submission/scripts/contract_check.py \
+#               --checkpoint /weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+#
+# Note the read-only weights mount plus HF_HUB_OFFLINE=1: with the gated VLM
+# backbone pre-staged into the mount, the container loads the model with no
+# network access and no writable cache.
+
+1. observation state
+  46 dims across 9 groups                              OK -- got 46
+
+2. loading the checkpoint
+Total number of DiT parameters:  1091722240
+Total number of SelfAttentionTransformer parameters:  201433088
+  loaded in 15.6s
+  state keys match ours                                OK -- ['legs', 'waist', 'left_arm', 'right_arm', 'left_gripper', 'right_gripper', 'base_gravity', 'left_eef', 'right_eef']
+  video keys match ours                                OK -- ['cam_head', 'cam_left_wrist', 'cam_right_wrist']
+  action keys are ours plus the dropped waist          OK -- ['waist', 'left_arm', 'right_arm', 'left_gripper', 'right_gripper']
+  action horizon is 40                                 OK -- got 40
+
+3. inference
+  arm targets are (40, 14)                             OK -- (40, 14)
+  gripper targets are (40, 2)                          OK -- (40, 2)
+  latency: warmup 1224ms, then ['187ms', '184ms', '182ms']
+  PEAK GPU: allocated 6.02 GiB | reserved 6.10 GiB   <- manifest number
+  row 0 is an absolute target, not a delta             OK -- max |row0 - observed| = 0.0178 rad
+  gripper targets inside the Dex1-1 range              OK -- [3.129, 4.479]
+
+4. joint gates, FK, and the boundary's own validator
+  joint gates                                          OK
+  boundary DecoupledSink.validate_chunk on (12, 25)    OK
+  left  ee pos [0.2362 0.1518 0.1149] quat [ 0.9982  0.0043 -0.0483 -0.0357]
+  right ee pos [ 0.2915 -0.1776  0.1545] quat [ 0.9777 -0.0935 -0.1801 -0.0531]
+  hands [-0.471 -0.471 -0.646 -0.646] | nav/height/torso [0. 0. 0. 0. 0. 0. 0.]
+
+ALL CONTRACT CHECKS PASSED
+
+# The 185 ms measured here is what set --execute-rows to 16: see the `control`
+# block in manifest.yaml. This run used the old default of 8, which is why the
+# encoded chunk above is (12, 25) rather than (26, 25).
