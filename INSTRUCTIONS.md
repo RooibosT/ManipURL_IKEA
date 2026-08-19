@@ -241,6 +241,27 @@ is enough to correct any of them, and none needs a rebuild.
    template client uses `DECOUPLED_CHUNK_HZ = 20` as the row rate for staleness,
    which is where the ambiguity comes from.)
 
+5. **Can the Dex1-1 gripper position reach us at all?** As shipped it cannot,
+   and we think that is a gap rather than a decision. `boundary/states.py`
+   declares the optional hand slots as `(7,)` — the Dex3 shape — and
+   `_as_vector` rejects anything else outright, so a 1-DoF Dex1-1 jaw position
+   has no schema-valid way onto `:5557`. The README's advice ("synthesize
+   whatever your model expects") is what we do: our two gripper state dims are
+   fed from our own last command.
+
+   That is fine right up to the moment it matters. Our checkpoint was trained
+   on the *measured* jaw position, and command and measurement agree only while
+   the gripper is moving freely. The instant it closes on a table leg the jaw
+   stops at the object and our command keeps going, so the policy sees "closed"
+   while the hardware is holding something — exactly the state it needs to read
+   correctly to decide whether a grasp succeeded.
+
+   If you can publish it we will use it, in whatever form is least disruptive:
+   the real value repeated across the 7-wide vector, a new key, anything. If
+   you would rather not touch the boundary, tell us and we will stop asking; we
+   just would rather you knew that no team on a Dex1-1 rig can close that loop
+   today.
+
 Two smaller ones we resolved by following the template's own reference: that
 `base_height_cmd = 0` and `torso_rpy = 0` mean *neutral / hold* rather than an
 absolute target of zero height. If that is wrong, it is the one place our chunks

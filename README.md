@@ -94,9 +94,17 @@ asymmetric — being wrong about gigabit costs 34 ms that the chunk sizing
 absorbs, being wrong about 100 Mb/s costs a robot that barely moves — so JPEG
 is the default until the bench link is known.
 
-**No gripper state is published.** The Dex1-1 rig means `:5557` carries no hand
-vector, but our 46-dim state has two gripper dims. They are fed from our own
-last command, which is what the gripper is tracking to anyway.
+**No gripper state is published, and none can be.** The Dex1-1 rig means
+`:5557` carries no hand vector — and `boundary/states.py` types the optional
+hand slots as `(7,)`, the Dex3 shape, rejecting anything else, so a 1-DoF jaw
+position has no schema-valid way through. Our 46-dim state has two gripper dims,
+fed from our own last command.
+
+Command and measurement agree while the gripper moves freely and diverge the
+moment it closes on something: the jaw stops at the object, our command does
+not, and the policy — trained on the measured position — reads "closed" while
+the hardware is holding a table leg. We have asked the organizer whether the
+value can reach us in any form (INSTRUCTIONS.md, open question 5).
 
 **A missing camera means hold still, not crash.** The checkpoint has no
 missing-view mode. A camera that drops after working reuses its last good frame
