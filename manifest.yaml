@@ -84,9 +84,12 @@ weights:
       Public but gated, with automatic approval: open the URL, accept the terms,
       and access is granted immediately -- no request queue. Then either
       pre-stage it into the weights mount so the container needs no network at
-      run time (HF_HOME=/opt/weights/hf-cache hf download nvidia/Cosmos-Reason2-2B,
-      then run with -e HF_HOME=/weights/hf-cache), or pass -e HF_TOKEN for an
-      account that has accepted the terms. INSTRUCTIONS.md §0 has both.
+      run time (HF_HUB_CACHE=/opt/weights/hf-cache/hub hf download
+      nvidia/Cosmos-Reason2-2B, then run with -e HF_HOME=/weights/hf-cache), or
+      pass -e HF_TOKEN for an account that has accepted the terms. Note
+      HF_HUB_CACHE rather than HF_HOME for the download: HF_HOME moves the
+      token too, which makes the download unauthenticated and the gate then
+      rejects it. INSTRUCTIONS.md §0 has both routes.
   download_gb: 12.6
   # The checkpoint is stored fp32 (3 safetensors shards, 12.58 GB) and cast to
   # bfloat16 at load, which is why it occupies about half that on the GPU. Size

@@ -59,10 +59,18 @@ Then pre-stage it next to the weights, so the container needs no network at run
 time:
 
 ```bash
-HF_HOME=/opt/weights/hf-cache hf download nvidia/Cosmos-Reason2-2B   # ~4.9 GB
+hf auth whoami                       # confirm this is the account that accepted
+export HF_TOKEN="$(cat ~/.cache/huggingface/token)"
+HF_HUB_CACHE=/opt/weights/hf-cache/hub hf download nvidia/Cosmos-Reason2-2B  # ~4.9 GB
 ```
 
-and run with `-e HF_HOME=/weights/hf-cache` (already in the command below). If
+`HF_HUB_CACHE`, not `HF_HOME`: `HF_HOME` moves the token as well as the cache,
+so setting it here makes the download unauthenticated and the gate rejects it
+with "Access denied. This repository requires approval" even when your account
+has access. Inside the container `HF_HOME` is the right variable, because by
+then there is no token to find and nothing to fetch.
+
+Run with `-e HF_HOME=/weights/hf-cache` (already in the command below). If
 you would rather let the container fetch it, pass `-e HF_TOKEN=<your token>`
 instead and give it network access. The entrypoint checks for one or the other
 before loading anything and says which is missing.
