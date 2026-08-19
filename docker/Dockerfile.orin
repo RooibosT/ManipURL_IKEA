@@ -35,6 +35,8 @@ WORKDIR /submission
 COPY boundary/ /submission/boundary/
 COPY components/ /submission/components/
 COPY mocks/ /submission/mocks/
+COPY scripts/ /submission/scripts/
+COPY docs/boundary.sha256 /submission/docs/boundary.sha256
 COPY conformance.py requirements.txt /submission/
 COPY docker/entrypoint_orin.sh /usr/local/bin/entrypoint_orin.sh
 RUN chmod +x /usr/local/bin/entrypoint_orin.sh

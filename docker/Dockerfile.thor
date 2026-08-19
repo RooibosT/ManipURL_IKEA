@@ -62,6 +62,8 @@ COPY boundary/ /submission/boundary/
 COPY components/ /submission/components/
 COPY mocks/ /submission/mocks/
 COPY assets/ /submission/assets/
+COPY scripts/ /submission/scripts/
+COPY docs/boundary.sha256 /submission/docs/boundary.sha256
 COPY conformance.py requirements.txt /submission/
 COPY docker/entrypoint_thor.sh /usr/local/bin/entrypoint_thor.sh
 RUN chmod +x /usr/local/bin/entrypoint_thor.sh
