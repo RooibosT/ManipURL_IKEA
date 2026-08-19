@@ -71,6 +71,22 @@ weights:
     on purpose -- a grant is revocable and auditable, and it keeps a credential
     out of the submission documents. If a token suits your workflow better, say
     so and we will issue a fine-grained read-only one over a separate channel.
+  # SECOND GATED DEPENDENCY, and the one that is easy to miss. Every GR00T
+  # checkpoint -- ours and the base model alike -- loads its VLM backbone from
+  # Hugging Face at model-load time. It is not inside our checkpoint and not
+  # baked into the image.
+  backbone:
+    repo: nvidia/Cosmos-Reason2-2B
+    url: https://huggingface.co/nvidia/Cosmos-Reason2-2B
+    download_gb: 4.9
+    gated: true
+    access: >-
+      Public but gated, with automatic approval: open the URL, accept the terms,
+      and access is granted immediately -- no request queue. Then either
+      pre-stage it into the weights mount so the container needs no network at
+      run time (HF_HOME=/opt/weights/hf-cache hf download nvidia/Cosmos-Reason2-2B,
+      then run with -e HF_HOME=/weights/hf-cache), or pass -e HF_TOKEN for an
+      account that has accepted the terms. INSTRUCTIONS.md §0 has both.
   download_gb: 12.6
   # The checkpoint is stored fp32 (3 safetensors shards, 12.58 GB) and cast to
   # bfloat16 at load, which is why it occupies about half that on the GPU. Size

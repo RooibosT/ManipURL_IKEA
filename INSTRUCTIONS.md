@@ -44,9 +44,34 @@ bfloat16 at load, so it occupies roughly 6 GB on the GPU).
 > form. We would rather grant per-account access than mail you a shared token,
 > but say the word and we will issue a fine-grained read-only token instead.
 
+### And one more download: the VLM backbone
+
+Every GR00T checkpoint — ours and NVIDIA's base model alike — loads its vision-
+language backbone `nvidia/Cosmos-Reason2-2B` from Hugging Face when the model is
+constructed. It is not inside our checkpoint and not baked into the image, and
+**it is gated**. Miss it and the server dies 30 seconds into loading with a 401
+about a repo you never asked for.
+
+The gate is automatic approval, not a request queue: open
+<https://huggingface.co/nvidia/Cosmos-Reason2-2B>, accept the terms, done.
+
+Then pre-stage it next to the weights, so the container needs no network at run
+time:
+
+```bash
+HF_HOME=/opt/weights/hf-cache hf download nvidia/Cosmos-Reason2-2B   # ~4.9 GB
+```
+
+and run with `-e HF_HOME=/weights/hf-cache` (already in the command below). If
+you would rather let the container fetch it, pass `-e HF_TOKEN=<your token>`
+instead and give it network access. The entrypoint checks for one or the other
+before loading anything and says which is missing.
+
 Both images also come from `nvcr.io`, which needs an NGC login even though the
 base images are public: `docker login nvcr.io` with username `$oauthtoken` and
 an NGC API key.
+
+Total to stage on the Thor: **12.6 GB** checkpoint + **4.9 GB** backbone.
 
 ---
 
@@ -59,6 +84,8 @@ docker run --rm -it \
     --ipc host \
     -v /opt/weights:/weights:ro \
     -e PEVAL_CHECKPOINT=/weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40 \
+    -e HF_HOME=/weights/hf-cache \
+    -e HF_HUB_OFFLINE=1 \
     <thor-image>@<thor-digest> \
     python components/server.py --lane decoupled --port 8765
 ```
@@ -70,6 +97,8 @@ docker run --rm -it \
 | `--ipc host` | PyTorch dataloader/shared-memory headroom. Not strictly required at batch 1; drop it if it conflicts with your setup. |
 | `-v /opt/weights:/weights:ro` | The checkpoint. Read-only is enough. |
 | `-e PEVAL_CHECKPOINT=` | Which directory under the mount to load. Already the image default; override only if you put the weights elsewhere. |
+| `-e HF_HOME=/weights/hf-cache` | Where the pre-staged `nvidia/Cosmos-Reason2-2B` backbone lives. Drop it and pass `-e HF_TOKEN` instead if you would rather fetch it at run time. |
+| `-e HF_HUB_OFFLINE=1` | With the backbone pre-staged there is nothing left to fetch, so this keeps model loading off the network entirely. Drop it if you are using `HF_TOKEN`. |
 
 The entrypoint refuses to start if `torch` has no `sm_110` kernels or if the
 checkpoint directory is missing, because both of those otherwise fail later and
