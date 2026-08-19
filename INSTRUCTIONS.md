@@ -219,7 +219,21 @@ is enough to correct any of them, and none needs a rebuild.
    the convention the checkpoint was trained against. Change with
    `--ee-offset-m`.
 
-3. **What row spacing does the adapter assume?** We publish at **50 Hz**,
+3. **What does the Thor<->Orin link negotiate?** One command on your side
+   (`ethtool <iface> | grep Speed`) and we stop guessing. We ship the
+   observation images as JPEG because we cannot see your link: three 480x640x3
+   frames are 2.76 MB raw, which is ~22 ms at gigabit but ~221 ms at 100 Mb/s,
+   and at 100 Mb/s that alone would leave 1 of our 26 published rows alive.
+   JPEG costs about 55 ms end to end regardless of link speed, so it is the
+   safe default and mildly wasteful on gigabit. If your link is gigabit, add
+   `--jpeg-quality 0` to the client command and we send raw — it is a client
+   flag, so no rebuild.
+
+   (We found this on our own bench, where the Thor's NIC had negotiated
+   100 Mb/s on a two-pair cable. Ours, not yours — but it is why we would
+   rather know than assume.)
+
+4. **What row spacing does the adapter assume?** We publish at **50 Hz**,
    resampled in joint space from the checkpoint's 30 Hz rows, because 50 Hz is
    the controller cadence named in the README. If your adapter reads chunks at
    a different row rate, `--row-hz` sets ours and the server re-declares it in

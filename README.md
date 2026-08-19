@@ -87,6 +87,13 @@ holds whatever the link negotiates. The frames arrived as JPEG from the
 organizer's camera server in the first place, so this is a second generation of
 the same artefacts. `--jpeg-quality 0` sends raw; the server accepts either.
 
+It is not a free win, which is why it stays a flag: encode plus decode is about
+55 ms end to end whatever the link, so on a gigabit link raw is roughly 34 ms
+faster and on a 100 Mb/s link JPEG is roughly 154 ms faster. The loss is
+asymmetric — being wrong about gigabit costs 34 ms that the chunk sizing
+absorbs, being wrong about 100 Mb/s costs a robot that barely moves — so JPEG
+is the default until the bench link is known.
+
 **No gripper state is published.** The Dex1-1 rig means `:5557` carries no hand
 vector, but our 46-dim state has two gripper dims. They are fed from our own
 last command, which is what the gripper is tracking to anyway.
