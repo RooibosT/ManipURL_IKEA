@@ -78,7 +78,8 @@ ENV LD_LIBRARY_PATH="$VIRTUAL_ENV/lib/python3.12/site-packages/torch/lib:$VIRTUA
 
 # --- boundary + transport deps ----------------------------------------------
 COPY docker/requirements-thor.txt /tmp/requirements-thor.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-thor.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-thor.txt \
+    && python -c "import cv2, numpy, zmq, msgpack, websockets, torch; print('imports ok:', cv2.__version__, numpy.__version__, torch.__version__)"
 
 # --- the submission ----------------------------------------------------------
 WORKDIR /submission

@@ -30,11 +30,31 @@ COPY docker/requirements-orin.txt /tmp/requirements-orin.txt
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && python3 -m pip install --no-cache-dir -r /tmp/requirements-orin.txt
 
+# libgomp is built with static TLS, and on aarch64 the surplus reserved for
+# that is small. cv2 pulls libgomp in through dlopen, i.e. after the initial
+# load set has already claimed the surplus, and the import dies with
+#
+#   ImportError: libgomp.so.1: cannot allocate memory in static TLS block
+#
+# Preloading moves it into the initial load set, where the reservation is made.
+# The boundary imports cv2 to decode camera JPEGs, so without this the client
+# does not start at all -- not just conformance.
+ENV LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1
+RUN if [ ! -f "$LD_PRELOAD" ]; then \
+        echo "libgomp is not at $LD_PRELOAD in this base image; the real path is:"; \
+        ldconfig -p | grep libgomp || echo "  (not found at all)"; \
+        exit 1; \
+    fi \
+    && python3 -c "import cv2, numpy, zmq, msgpack, websockets; print('cv2', cv2.__version__, '| numpy', numpy.__version__, '| websockets', websockets.__version__)"
+
 WORKDIR /submission
 # boundary/ is copied exactly as the organizer ships it. Only components/ is ours.
 COPY boundary/ /submission/boundary/
 COPY components/ /submission/components/
 COPY mocks/ /submission/mocks/
+# 52 KB of joint origins. The client never runs FK, but conformance.py
+# starts the server in-process, and that does.
+COPY assets/ /submission/assets/
 COPY scripts/ /submission/scripts/
 COPY docs/boundary.sha256 /submission/docs/boundary.sha256
 COPY conformance.py requirements.txt /submission/
