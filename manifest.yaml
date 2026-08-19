@@ -1,9 +1,15 @@
 # IKEA IROS Assembly Challenge — submission manifest
 # Team ManipURL · Unitree G1 EDU (Dex1-1) · https://github.com/RooibosT/ManipURL_IKEA
 #
-# Everything marked TBD needs a build on the target hardware and is filled by
-# scripts/build_and_push.sh, which writes the digest it gets back from the
-# registry. Nothing else in this file changes at build time.
+# The digests below were written by scripts/build_and_push.sh from what the
+# registry returned, for images built on our own Thor (JetPack 7.1, CUDA 13.0)
+# and Orin NX (L4T R35.3.1) -- the same builds every measurement in this file
+# came from. Rebuilding from the same Dockerfile would not reproduce these
+# bytes: uv and apt both resolve against the network, so the digest, not the
+# recipe, is what pins what you run.
+#
+# Open questions we would like answered are in INSTRUCTIONS.md; every one of
+# them is a flag or a declaration, so an answer costs us no rebuild.
 
 lane: decoupled
 # Not a preference. Our policy is GR00T N1.7 finetuned under the
@@ -22,8 +28,8 @@ images:
     target_arch: aarch64
     target_sm: sm_110          # Blackwell
     dockerfile: docker/Dockerfile.thor
-    image: TBD                 # <registry>/manipurl-thor
-    digest: TBD                # sha256:...
+    image: ghcr.io/rooibost/manipurl-thor:v1
+    digest: sha256:6cf2039c06ec1c039a0825ecbfb5fcdcbe690e40af4740d2593e83234948d1c5
     entrypoint:
       - python
       - components/server.py
@@ -42,8 +48,8 @@ images:
     target_sm: sm_87           # Ampere. The client does no inference; nothing
                                # in this image is compiled for the GPU.
     dockerfile: docker/Dockerfile.orin
-    image: TBD                 # <registry>/manipurl-orin
-    digest: TBD                # sha256:...
+    image: ghcr.io/rooibost/manipurl-orin:v1
+    digest: sha256:44015fc48016e3a406ac1025550a06ad3c7deaad796ad6c254f9181fdb422dc9
     entrypoint:
       - python3
       - components/client.py

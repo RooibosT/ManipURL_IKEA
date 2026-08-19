@@ -172,7 +172,7 @@ bench rather than assuming.
       inference, 6.10 GiB peak (`docs/contract_check_thor.log`)
 - [x] Both images build and run on their own silicon; the Thor image's torch
       carries sm_110 kernels
-- [ ] Both pushed and their digests written into `manifest.yaml`
-      (`scripts/build_and_push.sh` does that)
+- [x] Both pushed to `ghcr.io/rooibost/` and their digests written into
+      `manifest.yaml`
 - [x] Peak GPU memory measured on the Thor: 6.10 GiB reserved, declared 8 GB
 - [ ] Closed-loop run against the real checkpoint
