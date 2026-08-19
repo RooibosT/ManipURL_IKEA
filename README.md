@@ -104,6 +104,33 @@ action contract on the hold-still policy; `scripts/dev_stack.sh` covers the
 camera path; `scripts/contract_check.py` is the one that loads the real
 checkpoint, and it prints the peak GPU figure `manifest.yaml` wants.
 
+## Rehearsing on our own Thor and Orin
+
+`192.168.100.1/.2` is the bench's addressing, not ours. Our pair sits on
+`192.168.123.x` (Thor `.2`, Orin `.164`), so point the client at it:
+
+```bash
+# Orin container
+-e PEVAL_THOR_HOST=192.168.123.2
+```
+
+Do not read a successful `ping 192.168.100.1` from the Orin as the link being
+up — something else on the office network answers that address. Ping the Thor's
+real address instead.
+
+Two differences from the bench worth tracking:
+
+| | our hardware | the bench |
+|---|---|---|
+| Orin | JetPack 5.1.1, L4T **R35.3.1** | R35.3.1 — exact match |
+| Thor | JetPack **7.1-b112**, L4T R38.4, CUDA 13.0 | JetPack 7.2, L4T R39.2, CUDA 13.0 |
+
+The Orin image pins an `l4t-*` tag and must match its host exactly, and ours
+does. The Thor image is a plain NGC CUDA image rather than an `l4t-*` tag, so
+it is not pinned to an L4T revision — and building against CUDA 13.0 on 7.1 to
+run on 7.2 is the forward-compatible direction. Still worth confirming on the
+bench rather than assuming.
+
 ## Status
 
 - [x] `boundary/` verbatim, checksummed
