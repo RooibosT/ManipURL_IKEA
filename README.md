@@ -95,10 +95,14 @@ scripts/check_boundary.sh                  # boundary/ unmodified
 scripts/dev_stack.sh                       # full loop, all three declared cameras
 ```
 
+```bash
+python scripts/contract_check.py --checkpoint /weights/<name>   # needs the weights
+```
+
 `conformance.py` runs the organizer's single-camera mock, so it validates the
-action contract on the hold-still policy; `scripts/dev_stack.sh --stereo-ego`
-covers the camera path. Neither exercises the real checkpoint — that needs the
-weights and a GPU.
+action contract on the hold-still policy; `scripts/dev_stack.sh` covers the
+camera path; `scripts/contract_check.py` is the one that loads the real
+checkpoint, and it prints the peak GPU figure `manifest.yaml` wants.
 
 ## Status
 
@@ -107,7 +111,12 @@ weights and a GPU.
 - [x] `conformance.py --lane decoupled` passing (Python 3.8 and 3.10)
 - [x] Full task-space path — FK, quaternion ordering, gripper mapping — checked
       against `boundary`'s own validator
+- [x] Real checkpoint loaded and inferred through the server's own code path;
+      the checkpoint's declared state, video and action keys match what
+      `policy/bct.py` assumes (`scripts/contract_check.py`,
+      `docs/contract_check.log`)
 - [ ] Images built and pushed on Thor/Orin silicon; digests into `manifest.yaml`
       (`scripts/build_and_push.sh` does both)
-- [ ] Peak GPU memory measured on the Thor, replacing the 24 GB estimate
+- [ ] Peak GPU memory re-measured on the Thor (6.10 GiB on an A100; declared
+      12 GB with headroom)
 - [ ] Closed-loop run against the real checkpoint

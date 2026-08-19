@@ -75,15 +75,18 @@ weights:
     this checkpoint was measured there.
 
 # Peak GPU memory we expect on the Thor, of its 128 GB unified pool.
-# Estimate, not yet measured on Thor silicon:
-#   6.9 GB  checkpoint weights, bf16
-#   ~4 GB   activations and workspace, batch 1, 3 views, 4 denoising steps
-#   ~1 GB   CUDA context and allocator slack
-#   ~6 GB   reserved in case we enable the TensorRT path (engines are ~6 GB;
-#           on our Thor deployment TRT cut median inference 226.9 -> 163.3 ms)
-# We will replace this with a measured `torch.cuda.max_memory_reserved()` once
-# the image is built on the Thor.
-peak_gpu_memory_gb: 24
+# MEASURED at 6.10 GiB reserved (6.02 GiB allocated) for the PyTorch eager path:
+# batch 1, 3 views, 4 denoising steps, horizon 40, via scripts/contract_check.py.
+# That measurement is from an A100 (sm_80, CUDA 12.8), not Thor silicon, so we
+# declare it with headroom rather than as-is:
+#   6.1 GB   measured peak, PyTorch eager
+#   ~2 GB    allocator and CUDA-version differences on Thor's CUDA 13
+#   ~4 GB    reserve in case we enable the TensorRT path (engines are ~6 GB on
+#            disk; on our own Thor deployment TRT cut median inference
+#            226.9 -> 163.3 ms)
+# We will replace this with a Thor-side `torch.cuda.max_memory_reserved()` as
+# soon as the image builds there; the same script prints it.
+peak_gpu_memory_gb: 12
 
 # --- Everything below is context, not a required manifest field -------------
 
