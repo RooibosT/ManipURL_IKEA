@@ -5,6 +5,18 @@ Team **ManipURL** · lane **`decoupled`** · Unitree G1 EDU with Dex1-1 grippers
 Everything below is the command as we expect you to type it. `manifest.yaml`
 carries the same values in machine-readable form.
 
+## Where each onboarding item lives
+
+| # | Item | Where |
+|---|---|---|
+| 1 | Repo with an unmodified `boundary/` and a Dockerfile per container | this repo; `docker/Dockerfile.thor`, `docker/Dockerfile.orin`; verify with `scripts/check_boundary.sh` |
+| 2 | Thor image, by digest | `manifest.yaml` → `images.thor.digest` |
+| 3 | Orin image, by digest | `manifest.yaml` → `images.orin.digest` |
+| 4 | Model weights, not baked in | `manifest.yaml` → `weights`; download and access in §0 below |
+| 5 | Manifest | `manifest.yaml` |
+| 6 | Conformance log | `docs/conformance_decoupled_orin.log` (on our Orin, inside the built image); `docs/conformance_decoupled.log` and `..._py38.log` are the same check off-hardware |
+| 7 | Run command per container | §1 and §2 below |
+
 ---
 
 ## 0 · Before the first run: the weights
@@ -14,16 +26,22 @@ The checkpoint is **not** baked into the image — mount it.
 ```bash
 # on the Thor, once
 pip install -U "huggingface_hub[cli]"
-hf auth login                       # or: export HF_TOKEN=<token we give you>
+hf auth login                       # your own HF account, once we have added it
 hf download RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40 \
     --local-dir /opt/weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
 ```
 
+<https://huggingface.co/RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40>
+
 About **12.6 GB** to download (the checkpoint is stored fp32 and cast to
-bfloat16 at load, so it occupies roughly 6 GB on the GPU). The repo is **private**: tell us whether you would rather we add
-your Hugging Face account as a reader or hand you a scoped read token, and we
-will do that before the slot. There is no other gating — no license click-through,
-no request form.
+bfloat16 at load, so it occupies roughly 6 GB on the GPU).
+
+> **The one thing we need from you to make this work:** the repo is private, so
+> send us the Hugging Face username(s) of whoever will pull it and we will add
+> them as readers. Then `hf auth login` with your own token and the command
+> above just works. There is no gate, no license click-through and no request
+> form. We would rather grant per-account access than mail you a shared token,
+> but say the word and we will issue a fine-grained read-only token instead.
 
 Both images also come from `nvcr.io`, which needs an NGC login even though the
 base images are public: `docker login nvcr.io` with username `$oauthtoken` and

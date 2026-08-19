@@ -58,13 +58,19 @@ thor_orin_port: 8765
 
 weights:
   uri: hf://RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+  url: https://huggingface.co/RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
   # NOT baked into the image. Mounted read-only at /weights; see INSTRUCTIONS.md.
   visibility: private
+  gated: false
   access: >-
-    Private Hugging Face repo. We will grant read access to the evaluation
-    team's HF account or hand over a scoped read token before the bench slot --
-    tell us which you prefer. `hf download <repo> --local-dir <dir>` with that
-    token is the whole procedure; there is no other gating.
+    ACTION NEEDED FROM YOU: send us the Hugging Face username(s) of whoever will
+    pull the weights and we will add them as readers on the repo. After that it
+    is a normal `hf auth login` with your own token and the `hf download` line
+    in INSTRUCTIONS.md; there is no gate, no license click-through and no form.
+    We are granting per-account access rather than handing over a shared token
+    on purpose -- a grant is revocable and auditable, and it keeps a credential
+    out of the submission documents. If a token suits your workflow better, say
+    so and we will issue a fine-grained read-only one over a separate channel.
   download_gb: 12.6
   # The checkpoint is stored fp32 (3 safetensors shards, 12.58 GB) and cast to
   # bfloat16 at load, which is why it occupies about half that on the GPU. Size
