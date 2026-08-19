@@ -17,7 +17,8 @@ weights/
 
 # Local runs
 *.log
-!docs/conformance_*.log
+# ...except the check logs we ship as evidence
+!docs/*.log
 conformance_report*.json
 
 # Editors / OS

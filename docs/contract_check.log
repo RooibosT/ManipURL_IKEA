@@ -1,0 +1,29 @@
+$ python scripts/contract_check.py --checkpoint <checkpoint-15000>
+# host: x86_64 A100-SXM4-80GB (sm_80), torch 2.9.0+cu128, python 3.12
+# NOT the Thor -- this validates the checkpoint contract and our code path.
+# Re-run on the Thor for the numbers that belong in manifest.yaml.
+
+1. observation state
+  46 dims across 9 groups                              OK -- got 46
+2. loading the checkpoint
+Total number of DiT parameters:  1091722240
+Total number of SelfAttentionTransformer parameters:  201433088
+  loaded in 36.1s
+  state keys match ours                                OK -- ['legs', 'waist', 'left_arm', 'right_arm', 'left_gripper', 'right_gripper', 'base_gravity', 'left_eef', 'right_eef']
+  video keys match ours                                OK -- ['cam_head', 'cam_left_wrist', 'cam_right_wrist']
+  action keys are ours plus the dropped waist          OK -- ['waist', 'left_arm', 'right_arm', 'left_gripper', 'right_gripper']
+  action horizon is 40                                 OK -- got 40
+3. inference
+  arm targets are (40, 14)                             OK -- (40, 14)
+  gripper targets are (40, 2)                          OK -- (40, 2)
+  latency: warmup 1762ms, then ['295ms', '288ms', '167ms']
+  PEAK GPU: allocated 6.02 GiB | reserved 6.10 GiB   <- manifest number
+  row 0 is an absolute target, not a delta             OK -- max |row0 - observed| = 0.0177 rad
+  gripper targets inside the Dex1-1 range              OK -- [2.533, 4.500]
+4. joint gates, FK, and the boundary's own validator
+  joint gates                                          OK
+  boundary DecoupledSink.validate_chunk on (12, 25)    OK
+  left  ee pos [0.2354 0.148  0.1159] quat [ 0.9976 -0.0035 -0.0531 -0.0433]
+  right ee pos [ 0.291  -0.179   0.1607] quat [ 0.9753 -0.0891 -0.1942 -0.0554]
+  hands [-0.523 -0.523 -0.638 -0.638] | nav/height/torso [0. 0. 0. 0. 0. 0. 0.]
+ALL CONTRACT CHECKS PASSED
