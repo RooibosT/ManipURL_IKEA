@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Model weights are mounted, never committed
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.engine
+checkpoints/
+weights/
+
+# Local runs
+*.log
+!docs/conformance_*.log
+conformance_report*.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

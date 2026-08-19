@@ -1,0 +1,11 @@
+# Organizer-owned files, copied verbatim from
+#   https://github.com/iacevaltest/ikea_iros_submit @ 2ae4eeb5fcbb5794a10357d427a59504849280e5
+# Verify with: scripts/check_boundary.sh
+f4bafe5ea93c635b529f57f6b45d9051130b68fe506b181b7e33ef2542436613  boundary/__init__.py
+e86f6a3c9edcf21db56fb9ebe4480e013776b716c49a3b60c42d845fda237d45  boundary/actions.py
+9e41044ee75459bad6320405999bf5ad2d241295424145952ec8c830cf8c03f0  boundary/cameras.py
+9d79af1995d2f9ddea770e1e5e4a6ff13219f3856a9996a12a47e45c47cde258  boundary/states.py
+85077ae3cb69238f9dfadcaaef7185671efce2260b52b5c1f6ada302a5cf43d3  mocks/mock_orin.py
+0f5233a9d2fc0800fe00d45aef37ce1ec4873613e3124a0ac0c7a8c1d1023e6f  mocks/mock_wbc.py
+39029226a7ce882a5910ce0726c3bec9b9ca08c774fa97768570591231cbf9a1  conformance.py
+523e2a2e5f2340b0626c22e44d9e7951264b062e440e23883c07d623deaf03b5  requirements.txt
