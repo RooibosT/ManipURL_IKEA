@@ -18,12 +18,36 @@ FROM ${BASE_IMAGE}
 ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
 ENV DEBIAN_FRONTEND=noninteractive
 
+# The package lists are deliberately left in place: install_deps.sh decides
+# whether to add its own CUDA apt repo by asking apt-cache whether it can see
+# libnvpl-lapack0, and an empty /var/lib/apt/lists makes that check fail for
+# the wrong reason.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv \
         build-essential yasm cmake libtool git git-lfs pkg-config curl ca-certificates \
         libass-dev libfreetype6-dev libvorbis-dev \
-        autoconf automake texinfo ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+        autoconf automake texinfo ffmpeg
+
+# --- normalise the CUDA apt repo before the installer touches it ------------
+# The base image registers the CUDA repo WITHOUT a Signed-By option.
+# install_deps.sh installs NVIDIA's cuda-keyring whenever it cannot find
+# libnvpl-lapack0, and that package drops a SECOND entry for the same URI that
+# does set Signed-By. apt refuses to read any sources at all when two entries
+# disagree, so the installer dies on its first apt call:
+#
+#   E: Conflicting values set for option Signed-By regarding source
+#      https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/
+#
+# So we do it once, properly: drop the unsigned entry, install the keyring, and
+# assert the package is visible. The installer's own check then finds it and
+# skips its version of all this.
+RUN curl -fsSL -o /tmp/cuda-keyring.deb \
+        https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+    && rm -f /etc/apt/sources.list.d/*cuda* \
+    && dpkg -i /tmp/cuda-keyring.deb \
+    && rm -f /tmp/cuda-keyring.deb \
+    && apt-get update \
+    && apt-cache show libnvpl-lapack0 > /dev/null
 
 # --- Isaac-GR00T with the Thor (sm_110) dependency set ----------------------
 # Pinned by commit: this is the branch carrying the BCT recipe the deployed
@@ -47,9 +71,9 @@ ENV PATH="$VIRTUAL_ENV/bin:/usr/local/cuda/bin:$PATH"
 ENV TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 ENV CUDA_HOME=/usr/local/cuda-13.0
 ENV CUDA_PATH=/usr/local/cuda-13.0
-ENV CPATH="/usr/local/cuda-13.0/include:${CPATH}"
-ENV C_INCLUDE_PATH="/usr/local/cuda-13.0/include:${C_INCLUDE_PATH}"
-ENV CPLUS_INCLUDE_PATH="/usr/local/cuda-13.0/include:${CPLUS_INCLUDE_PATH}"
+ENV CPATH="/usr/local/cuda-13.0/include"
+ENV C_INCLUDE_PATH="/usr/local/cuda-13.0/include"
+ENV CPLUS_INCLUDE_PATH="/usr/local/cuda-13.0/include"
 ENV LD_LIBRARY_PATH="$VIRTUAL_ENV/lib/python3.12/site-packages/torch/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/nvidia/cu13/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/nvidia/cudss/lib:$VIRTUAL_ENV/lib/python3.12/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
 
 # --- boundary + transport deps ----------------------------------------------
