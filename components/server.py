@@ -127,6 +127,25 @@ class Policy:
                 file=sys.stderr,
             )
             return HoldStillPolicy(delay_s=self.args.delay_ms / 1000.0)
+
+        # Check the directory ourselves. Handed a path that does not exist,
+        # `AutoModel.from_pretrained` decides it must be a Hugging Face repo id
+        # and fails with "Repo id must be in the form 'repo_name'..." -- which
+        # says nothing about the actual problem, that the weights are not
+        # mounted. The entrypoint checks this too, but `--entrypoint bash`
+        # skips it, so the server does not rely on that.
+        checkpoint = Path(self.args.checkpoint)
+        if not (checkpoint / "config.json").is_file():
+            raise SystemExit(
+                "[server] {} is not a checkpoint directory (no config.json).\n"
+                "[server]   * on the bench: mount the weights read-only, e.g.\n"
+                "[server]     -v /opt/weights:/weights:ro\n"
+                "[server]   * to run without weights (conformance, wiring checks):\n"
+                "[server]     pass an empty checkpoint, e.g. -e PEVAL_CHECKPOINT=\n"
+                "[server]     which starts the hold-still policy instead.".format(
+                    checkpoint
+                )
+            )
         try:
             policy = Gr00tBctPolicy(
                 checkpoint_path=self.args.checkpoint,

@@ -25,6 +25,7 @@ The checkpoint is **not** baked into the image — mount it.
 
 ```bash
 # on the Thor, once
+sudo mkdir -p /opt/weights && sudo chown "$USER" /opt/weights
 pip install -U "huggingface_hub[cli]"
 hf auth login                       # your own HF account, once we have added it
 hf download RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40 \
@@ -198,11 +199,24 @@ could surprise you, so please say so.
 
 ## 6 · Verifying what we sent you
 
+From a checkout:
+
 ```bash
 scripts/check_boundary.sh                 # boundary/ is byte-identical to the template
 python conformance.py --lane decoupled    # our log: docs/conformance_decoupled.log
 scripts/dev_stack.sh                      # full loop against the mocks, with our
                                           # three declared cameras
+```
+
+Or inside either image, without weights. `PEVAL_CHECKPOINT=` (empty) is what
+selects the hold-still policy; leave it set and the server refuses to start
+without the weights mounted, which is what you want on the bench and not what
+you want here:
+
+```bash
+docker run --rm --network host -e PEVAL_CHECKPOINT= --entrypoint bash \
+    <image>@<digest> -c \
+    "cd /submission && scripts/check_boundary.sh && python conformance.py --lane decoupled"
 ```
 
 `conformance.py` runs `mock_orin --no-wrists`, which publishes only the mono
