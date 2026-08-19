@@ -79,10 +79,13 @@ Python 3.8 / websockets 13.1 *and* under 3.10 / websockets 15.0.
 **The link carries JPEG, not raw frames.** Three 480x640x3 images are 2.76 MB
 per observation, and on our own Thor↔Orin link that measured ~330 ms of round
 trip — more than the 185 ms the policy itself takes, and enough that the client
-discarded 25 of every 26 published rows as stale. Re-encoding them at quality 85
-takes the observation to roughly a twentieth of that. They arrived as JPEG from
-the organizer's camera server in the first place, so this is a second generation
-of the same artefacts. `--jpeg-quality 0` sends raw; the server accepts either.
+discarded 25 of every 26 published rows as stale. The cause was our Thor's NIC
+negotiating 100 Mb/s: 22.1 Mbit at 100 Mbit/s is 221 ms before framing. A
+gigabit link would have hidden it, which is the point — at ~150 KB per
+observation the encoding costs ~12 ms even at 100 Mb/s, so the chunk sizing
+holds whatever the link negotiates. The frames arrived as JPEG from the
+organizer's camera server in the first place, so this is a second generation of
+the same artefacts. `--jpeg-quality 0` sends raw; the server accepts either.
 
 **No gripper state is published.** The Dex1-1 rig means `:5557` carries no hand
 vector, but our 46-dim state has two gripper dims. They are fed from our own
