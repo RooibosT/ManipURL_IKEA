@@ -135,17 +135,18 @@ bench rather than assuming.
 
 - [x] `boundary/` verbatim, checksummed
 - [x] Both Dockerfiles, entrypoints with architecture and weight preflight
-- [x] `conformance.py --lane decoupled` passing **inside the built client
-      image on our real Orin NX** (L4T R35.3.1, Python 3.8) —
-      `docs/conformance_decoupled_orin.log`; also on x86 Python 3.8 and 3.10
+- [x] `conformance.py --lane decoupled` passing **inside both built images on
+      their own silicon** — `docs/conformance_decoupled_thor.log` (Thor, sm_110
+      confirmed in the arch list) and `docs/conformance_decoupled_orin.log`
+      (Orin NX, L4T R35.3.1, Python 3.8); also on x86 Python 3.8 and 3.10
 - [x] Full task-space path — FK, quaternion ordering, gripper mapping — checked
       against `boundary`'s own validator
 - [x] Real checkpoint loaded and inferred through the server's own code path;
       the checkpoint's declared state, video and action keys match what
       `policy/bct.py` assumes (`scripts/contract_check.py`,
       `docs/contract_check.log`)
-- [x] Orin image builds and runs on Orin silicon
-- [ ] Thor image built on Thor silicon
+- [x] Both images build and run on their own silicon; the Thor image's torch
+      carries sm_110 kernels
 - [ ] Both pushed and their digests written into `manifest.yaml`
       (`scripts/build_and_push.sh` does that)
 - [ ] Peak GPU memory re-measured on the Thor (6.10 GiB on an A100; declared

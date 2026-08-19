@@ -1,0 +1,38 @@
+# Captured on our Jetson AGX Thor, inside the built server image.
+# Transcribed from the console of that run.
+#
+#   host:  url@localhost, aarch64, JetPack 7.1-b112 / L4T R38.4, Ubuntu 24.04.3
+#          CUDA 13.0, 14 cores, 122 GB unified
+#   image: manipurl-thor:local, built from docker/Dockerfile.thor
+#          base nvcr.io/nvidia/cuda:13.0.0-devel-ubuntu24.04
+#
+# PEVAL_CHECKPOINT= (empty) selects the hold-still policy. Left at its baked-in
+# value the server refuses to start without the weights mounted, which is the
+# behaviour we want on the bench.
+#
+# The image's GPU preflight on the same build:
+#   [entrypoint] torch 2.10.0 cuda=13.0
+#   [entrypoint] GPU: NVIDIA Thor (sm_110) | built for ['sm_110', 'sm_121']
+# sm_110 in the arch list is the whole reason this image exists: the dGPU torch
+# wheels import cleanly and then die at the first kernel launch.
+
+$ docker run --rm --network host -e PEVAL_CHECKPOINT= --entrypoint bash manipurl-thor:local -c \
+    "cd /submission && scripts/check_boundary.sh && python conformance.py --lane decoupled"
+boundary/__init__.py: OK
+boundary/actions.py: OK
+boundary/cameras.py: OK
+boundary/states.py: OK
+mocks/mock_orin.py: OK
+mocks/mock_wbc.py: OK
+conformance.py: OK
+requirements.txt: OK
+boundary/ and the organizer's tooling are unmodified.
+conformance: lane=decoupled, need 40 clean messages
+
+[mock-wbc] lane=decoupled connected to tcp://127.0.0.1:5556
+[mock-wbc] ok #1 T=12 age=0.006s
+[mock-wbc] ok #26 T=12 age=0.006s
+[mock-wbc] 40 accepted, 0 rejected
+
+PASS — your client speaks the boundary contract.
+Next: confirm your manifest declares lane 'decoupled', then submit.
