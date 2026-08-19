@@ -87,6 +87,11 @@ class Inference:
         self._prompt = prompt
         self._camera_keys = camera_keys
         self._jpeg_quality = int(jpeg_quality)
+        # JPEG trades the Orin's CPU for link bandwidth, and the Orin is the
+        # machine with 16 GB of unified memory and no headroom to spare, so
+        # the trade is worth reporting rather than assuming.
+        self.encode_ms = 0.0
+        self.encode_bytes = 0
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="infer")
         self._pending = None            # the in-flight Future, or None
         self._missing_warned = set()
@@ -123,9 +128,15 @@ class Inference:
             "t": frame.received_at,
         }
         if self._jpeg_quality > 0:
-            obs["images_jpeg"] = encode_images(images, self._jpeg_quality)
+            started = time.monotonic()
+            blobs = encode_images(images, self._jpeg_quality)
+            self.encode_ms = (time.monotonic() - started) * 1000.0
+            self.encode_bytes = sum(len(b) for b in blobs.values())
+            obs["images_jpeg"] = blobs
         else:
             obs["images"] = images
+            self.encode_ms = 0.0
+            self.encode_bytes = sum(v.nbytes for v in images.values())
         return obs
 
     def submit(self) -> bool:
@@ -211,9 +222,10 @@ def run_decoupled(inference: Inference, sink, row_hz: float, min_period_s: float
         if chunks % 20 == 1:
             print(
                 "[client] chunk T={} latency={:.0f}ms skip={} publish={} rows "
-                "({:.0f}ms of motion)".format(
+                "({:.0f}ms of motion) | obs {:.0f}KB encoded in {:.0f}ms".format(
                     len(chunk), latency * 1000, skip, len(live),
                     len(live) / row_hz * 1000,
+                    inference.encode_bytes / 1024.0, inference.encode_ms,
                 )
             )
 
