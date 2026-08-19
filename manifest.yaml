@@ -65,8 +65,15 @@ weights:
     team's HF account or hand over a scoped read token before the bench slot --
     tell us which you prefer. `hf download <repo> --local-dir <dir>` with that
     token is the whole procedure; there is no other gating.
-  size_gb: 6.9
-  format: GR00T N1.7 safetensors checkpoint (bf16 at load)
+  download_gb: 12.6
+  # The checkpoint is stored fp32 (3 safetensors shards, 12.58 GB) and cast to
+  # bfloat16 at load, which is why it occupies about half that on the GPU. Size
+  # the download and the disk against 12.6 GB, not against the 6 GB runtime
+  # figure below.
+  format: GR00T N1.7 safetensors checkpoint, fp32 on disk, bf16 at load
+  verified: >-
+    Repo exists, private, not gated, 17 files, last updated 2026-08-18. Its
+    contents match the checkpoint scripts/contract_check.py was run against.
   description: >-
     GR00T N1.7 finetuned on Dex1 whole-body teleop, embodiment tag
     `new_embodiment`. 3 camera views, 46-dim state, action horizon 40 at 30 Hz,

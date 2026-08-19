@@ -19,7 +19,8 @@ hf download RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40 \
     --local-dir /opt/weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
 ```
 
-About 6.9 GB. The repo is **private**: tell us whether you would rather we add
+About **12.6 GB** to download (the checkpoint is stored fp32 and cast to
+bfloat16 at load, so it occupies roughly 6 GB on the GPU). The repo is **private**: tell us whether you would rather we add
 your Hugging Face account as a reader or hand you a scoped read token, and we
 will do that before the slot. There is no other gating — no license click-through,
 no request form.

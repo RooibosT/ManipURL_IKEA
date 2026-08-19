@@ -15,7 +15,7 @@ build, registered under the `new_embodiment` tag:
 
 | | |
 |---|---|
-| Checkpoint | `RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40` (private HF) |
+| Checkpoint | `RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40` (private HF, 12.6 GB fp32 on disk, bf16 at load) |
 | Views | head (left eye) + both wrists, `(480,640,3)` RGB |
 | State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12 |
 | Action | horizon 40 at 30 Hz; arms RELATIVE (restored to absolute by the processor), waist and grippers ABSOLUTE |
