@@ -55,8 +55,6 @@ TRAINING_EE_OFFSET_M = 0.05
 # state dims 5 cm off the training distribution.
 ACTION_EE_OFFSET_M = 0.0
 
-DEFAULT_EE_OFFSET_M = TRAINING_EE_OFFSET_M   # back-compat for callers
-
 DEFAULT_URDF = (
     Path(__file__).resolve().parents[2] / "assets" / "g1" / "g1_body29_hand14.urdf"
 )
@@ -233,12 +231,19 @@ def _load_joints(urdf_path: str) -> Dict[str, tuple]:
 
 
 class G1WristKinematics:
-    """FK for both wrists off the pelvis, in the BCT dataset's convention."""
+    """FK for both wrists off the pelvis, in the BCT dataset's convention.
+
+    ``ee_offset_m`` is required and keyword-only on purpose. There is no safe
+    default: TRAINING_EE_OFFSET_M is right for the model's state and wrong on
+    the wire, ACTION_EE_OFFSET_M the other way round, and a default would let
+    the two be confused again by writing nothing at all.
+    """
 
     def __init__(
         self,
         urdf_path: Optional[Path] = None,
-        ee_offset_m: float = DEFAULT_EE_OFFSET_M,
+        *,
+        ee_offset_m: float,
     ):
         urdf = Path(urdf_path) if urdf_path is not None else DEFAULT_URDF
         if not urdf.is_file():
