@@ -107,7 +107,7 @@ RUN chmod +x /usr/local/bin/entrypoint_thor.sh
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/submission
 # Weights are NOT baked in; mount them read-only at /weights. See INSTRUCTIONS.md.
-ENV PEVAL_CHECKPOINT=/weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+ENV PEVAL_CHECKPOINT=/weights/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40
 ENV PEVAL_LANE=decoupled
 ENV PEVAL_THOR_PORT=8765
 

@@ -5,14 +5,14 @@
     Orin  192.168.100.2   components/client.py and the organizer's endpoints
 
     python components/server.py --lane decoupled --port 8765 \
-        --checkpoint /weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+        --checkpoint /weights/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40
 
 What happens per call to :meth:`Policy.act`:
 
     boundary obs (body_q 29, base_quat 4, 3 images)
         -> 46-dim BCT state  (policy/bct.py)
         -> GR00T N1.7 inference, horizon 40 @ 30 Hz, arms restored to absolute
-        -> take the first --execute-rows rows, drop the waist group
+        -> take the first --execute-rows rows
         -> joint-domain gates                     (policy/taskspace.py)
         -> FK -> end-effector poses, resampled to --row-hz
         -> (T, 25) task-space chunk for the decoupled lane
@@ -64,7 +64,7 @@ from components.transport import serve_policy  # noqa: E402
 
 LANE = "decoupled"
 
-# Boundary camera key for each view the checkpoint consumes. cam_head was
+# Boundary camera key for each view the checkpoint consumes. cam_left_high was
 # trained on cam_0 of the source recording, which is the LEFT eye of the head
 # stereo pair, so the stereo boundary key is the faithful one; --head-camera
 # ego_view falls back to the mono frame, whose eye the organizer has not
@@ -291,7 +291,7 @@ class Policy:
             return
         self._prompts_warned.add(prompt)
         print(
-            "[server] WARNING: prompt {!r} is not one of the five the checkpoint "
+            "[server] WARNING: prompt {!r} is not one of the three the checkpoint "
             "was trained on {}. The policy will still return a confident-looking "
             "chunk -- it just was not asked anything it knows.".format(
                 prompt, list(TRAINED_PROMPTS)
@@ -408,8 +408,9 @@ def build_parser() -> argparse.ArgumentParser:
                               "cycle, so the controller holds its last command two "
                               "thirds of the time. 16 rows leaves 17 of 26, i.e. "
                               "340 ms of motion per cycle. The cost is accuracy "
-                              "deeper into the chunk: arm MAE is 1.20 deg at 5 rows, "
-                              "1.50 at 8, 2.25 at 16, 3.98 at 40.")
+                              "deeper into the chunk; for this checkpoint only the "
+                              "1-8 row window has been scored (arm MAE 1.45 deg, "
+                              "wrist 11.8 mm), so the 16-row figure is not measured.")
     control.add_argument("--row-hz", type=float, default=50.0,
                          help="Row spacing of the published (T, 25) chunk. 50 Hz "
                               "matches the controller cadence; the model's 30 Hz "

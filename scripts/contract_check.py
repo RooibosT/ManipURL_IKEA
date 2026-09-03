@@ -100,7 +100,7 @@ def main() -> int:
     check("video keys match ours",
           tuple(declared["video"].modality_keys) == tuple(policy.video_keys.values()),
           str(list(declared["video"].modality_keys)))
-    check("action keys are ours plus the dropped waist",
+    check("action keys match ours",
           tuple(declared["action"].modality_keys) == IGNORED_ACTION_KEYS + ACTION_KEYS,
           str(list(declared["action"].modality_keys)))
     horizon = len(declared["action"].delta_indices)

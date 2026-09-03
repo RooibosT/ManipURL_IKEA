@@ -4,14 +4,14 @@ The checkpoint is GR00T N1.7 finetuned on Dex1 whole-body teleop, registered
 under the ``new_embodiment`` tag. Its contract, which deployment has to
 reproduce exactly:
 
-    video   cam_head, cam_left_wrist, cam_right_wrist   (480, 640, 3) uint8 RGB
+    video   cam_left_high, cam_left_wrist, cam_right_wrist  (480, 640, 3) uint8 RGB
     state   46 dims, in this key order:
               legs 12 | waist 3 | left_arm 7 | right_arm 7
               left_gripper 1 | right_gripper 1
               base_gravity 3 | left_eef 6 | right_eef 6
-    action  waist 3 | left_arm 7 | right_arm 7 | left_gripper 1 | right_gripper 1
+    action  left_arm 7 | right_arm 7 | left_gripper 1 | right_gripper 1
             horizon 40 at 30 Hz, arms RELATIVE (the processor restores absolute
-            targets before returning), waist and grippers ABSOLUTE
+            targets before returning), grippers ABSOLUTE
     4 denoising steps -- every open-loop number for this checkpoint was
     measured at 4, and lowering it changes the actions that get executed.
 
@@ -26,11 +26,15 @@ quaternion, the two ``*_eef`` blocks by FK on the arm joints in the same row
     therefore fed from our own last command, which is what the gripper is
     tracking to anyway. The caller owns that value; see server.py.
 
-The waist group of the action is discarded. In the source recordings the waist
-is an output of the locomotion controller rather than the teleoperator
-(|d waist| correlates +0.85 with |d legs| and +0.12 with |d arms|), so the
-model only learned to imitate a balance controller -- and on this bench the
-organizer's whole-body controller owns those joints anyway.
+This checkpoint does not predict the waist at all: it is in the state but not
+in the action space. That is the same conclusion the earlier checkpoint's
+discarded waist group reached, now made upstream -- in the source recordings
+the waist is an output of the locomotion controller rather than the
+teleoperator (|d waist| correlates +0.85 with |d legs| and +0.12 with
+|d arms|), so there was only a balance controller to imitate, and on this
+bench the organizer's whole-body controller owns those joints anyway.
+``IGNORED_ACTION_KEYS`` is therefore empty; the published chunk still carries
+the waist we *measured*, taken from the observation.
 """
 
 from __future__ import annotations
@@ -60,28 +64,32 @@ STATE_KEYS = (
     "right_eef",
 )
 ACTION_KEYS = ("left_arm", "right_arm", "left_gripper", "right_gripper")
-IGNORED_ACTION_KEYS = ("waist",)
+IGNORED_ACTION_KEYS = ()          # this checkpoint predicts no waist group
 
 LANGUAGE_KEY = "annotation.human.task_description"
 
-# The checkpoint is language-conditioned, and these five strings are the whole
-# vocabulary it was trained on -- the source recordings were segmented into
-# these subtasks and nothing else. Anything else is out of distribution, and
-# the failure is quiet: the policy still produces a confident-looking chunk.
+# The checkpoint is language-conditioned, and these THREE strings are the whole
+# vocabulary it was trained on. Anything else is out of distribution, and the
+# failure is quiet: the policy still produces a confident-looking chunk.
+#
+# This is a three-task model on purpose. The five-task variants of the same
+# recipe also carry "rotate table base" and "flip table", and paying for those
+# two costs the original three about 12% on `insert`; dropping them is what
+# makes this the most accurate 46-dim checkpoint on `pick table leg`. Sending
+# either of those two strings here is undefined -- they were never trained.
+#
 # Locomotion segments ("move to table", "move table base") were deliberately
 # excluded from the finetune, so there is no prompt that makes it walk.
 TRAINED_PROMPTS = (
     "pick table leg",
-    "rotate leg to tighten",
     "insert table leg to table base",
-    "rotate table base",
-    "flip table",
+    "rotate leg to tighten",
 )
 
-# Deployment view -> the checkpoint's own video key. cam_head is cam_0 of the
-# source recording, which is the LEFT eye of the head stereo pair.
+# Deployment view -> the checkpoint's own video key. cam_left_high is cam_0 of
+# the source recording, which is the LEFT eye of the head stereo pair.
 DEFAULT_VIDEO_KEYS = {
-    "head": "cam_head",
+    "head": "cam_left_high",
     "left_wrist": "cam_left_wrist",
     "right_wrist": "cam_right_wrist",
 }
