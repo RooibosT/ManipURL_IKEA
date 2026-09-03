@@ -63,6 +63,7 @@ from components.policy.taskspace import (  # noqa: E402
     JointChunkError,
     TaskSpaceEncoder,
     command_to_measured_rad,
+    measured_to_command_rad,
     reset_gripper_rad,
     validate_joint_chunk,
 )
@@ -159,16 +160,17 @@ class Policy:
         while capped > 1 and self.encoder.rows_for(capped) > MAX_CHUNK_LENGTH:
             capped -= 1
         if capped != self.args.execute_rows:
-            print(
-                "[server] --execute-rows {} -> {}: {} model rows at {:g} Hz "
-                "resample to {} rows at {:g} Hz, over the contract's {}-row "
-                "limit.".format(
-                    self.args.execute_rows, capped, rows, self.args.model_row_hz,
-                    self.encoder.rows_for(rows), self.args.row_hz,
-                    MAX_CHUNK_LENGTH,
-                ),
-                file=sys.stderr,
-            )
+            if capped < rows:
+                why = ("{} model rows at {:g} Hz resample to {} rows at {:g} Hz, "
+                       "over the contract's {}-row limit".format(
+                           rows, self.args.model_row_hz,
+                           self.encoder.rows_for(rows), self.args.row_hz,
+                           MAX_CHUNK_LENGTH))
+            else:
+                why = "the checkpoint only predicts {} rows".format(
+                    self.policy.horizon)
+            print("[server] --execute-rows {} -> {}: {}.".format(
+                self.args.execute_rows, capped, why), file=sys.stderr)
         return capped
 
     # -- setup --------------------------------------------------------------
@@ -380,14 +382,23 @@ class Policy:
         """
         if self._gripper_q is not None:
             return
-        if self.args.initial_gripper_rad is not None:
-            self._gripper_q = np.full(2, float(self.args.initial_gripper_rad))
-            source = "--initial-gripper-rad"
-        else:
-            self._gripper_q = reset_gripper_rad(prompt)
-            source = "training-set start for {!r}".format(prompt)
+        self._gripper_q = self._target_gripper_q(prompt)
+        source = ("--initial-gripper-rad"
+                  if self.args.initial_gripper_rad is not None
+                  else "training-set start for {!r}".format(prompt))
         print("[server] gripper state seeded to (left {:.2f}, right {:.2f}) rad "
               "from {}".format(self._gripper_q[0], self._gripper_q[1], source))
+
+    def _target_gripper_q(self, prompt: str) -> np.ndarray:
+        """The MEASURED jaw position this task starts from, both hands.
+
+        One source for the state seed and the ready move's target, so
+        `--initial-gripper-rad` cannot pin one and leave the other on the
+        table's value.
+        """
+        if self.args.initial_gripper_rad is not None:
+            return np.full(2, float(self.args.initial_gripper_rad))
+        return reset_gripper_rad(prompt)
 
     def _ready_targets(self, body_q: np.ndarray, prompt: str):
         """Ramp the upper body to this task's recorded start pose.
@@ -417,7 +428,9 @@ class Policy:
             )
             self._ready_phase = "done"
             return self._hold_still_targets(body_q)
-        grip_target = reset_gripper_rad(prompt)
+        # The table stores the MEASURED jaw, so aim at the command that
+        # produces it and ramp in command space -- what we publish is a command.
+        grip_target = measured_to_command_rad(self._target_gripper_q(prompt))
         now = time.time()
         if self._ready_started_at is None:
             self._ready_started_at = now
@@ -429,10 +442,13 @@ class Policy:
             # single chunk and the arms would start moving while the jaw was
             # still opening, which is exactly the ordering it exists to prevent.
             arm = np.tile(measured, (rows, 1))
-            grip = self._ramp(self._gripper_q, grip_target, rows,
-                              self.args.ready_gripper_velocity_rad_s)
+            grip = self._ramp(measured_to_command_rad(self._gripper_q), grip_target,
+                              rows, self.args.ready_gripper_velocity_rad_s,
+                              self.args.model_row_hz)
             if now - self._ready_started_at >= self.args.ready_hand_dwell_s:
-                self._gripper_q = grip_target.copy()
+                # No assignment here: act() already ends by running the last
+                # published command back through the calibration, which is the
+                # same estimate and keeps one path for it.
                 print("[server] ready: jaws commanded to (left {:.2f}, right "
                       "{:.2f}) rad and given {:.1f}s to travel; moving the arms"
                       .format(grip_target[0], grip_target[1],
@@ -441,7 +457,8 @@ class Policy:
                 self._ready_started_at = now      # the arm timeout starts here
             return arm, grip
 
-        arm = self._ramp(measured, target, rows, self.args.ready_velocity_rad_s)
+        arm = self._ramp(measured, target, rows, self.args.ready_velocity_rad_s,
+                         self.args.model_row_hz)
         grip = np.tile(grip_target, (rows, 1))
         error = float(np.max(np.abs(measured - target)))
 
@@ -492,7 +509,8 @@ class Policy:
         return np.asarray(pose, dtype=np.float64)
 
     @staticmethod
-    def _ramp(start, target, rows: int, velocity_rad_s: float) -> np.ndarray:
+    def _ramp(start, target, rows: int, velocity_rad_s: float,
+              row_hz: float = 30.0) -> np.ndarray:
         """``rows`` model rows marching from ``start`` toward ``target``."""
         start = np.asarray(start, dtype=np.float64).reshape(-1)
         target = np.asarray(target, dtype=np.float64).reshape(-1)
@@ -500,7 +518,7 @@ class Policy:
         distance = float(np.max(np.abs(delta)))
         if distance < 1e-9:
             return np.tile(target, (rows, 1))
-        step = velocity_rad_s / 30.0          # per model row, at the model rate
+        step = velocity_rad_s / float(row_hz)   # per model row, at the model rate
         fractions = np.minimum(step * np.arange(1, rows + 1) / distance, 1.0)
         return start + fractions[:, None] * delta
 

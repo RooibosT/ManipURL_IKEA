@@ -50,6 +50,7 @@ from components.policy.taskspace import (  # noqa: E402
     TaskSpaceEncoder,
     command_to_measured_rad,
     gripper_rad_to_command,
+    measured_to_command_rad,
     reset_gripper_rad,
     validate_joint_chunk,
 )
@@ -135,6 +136,20 @@ def main() -> int:
     assert abs(float(gripper_rad_to_command(np.array([GRIPPER_OPEN_RAD]))[0]) + 1.0) < 1e-9
     assert abs(float(gripper_rad_to_command(np.array([GRIPPER_CLOSED_RAD]))[0]) - 1.0) < 1e-9
     print("  open/closed map to boundary -1 / +1 exactly         OK")
+
+    # the calibration must invert: the reset table stores MEASURED jaw, and the
+    # ready move has to aim at the command that produces it, not at it directly.
+    for prompt in GRIPPER_RESET_RAD_BY_TASK:
+        want = reset_gripper_rad(prompt)
+        got = command_to_measured_rad(measured_to_command_rad(want))
+        reach_lo = command_to_measured_rad(np.full(2, GRIPPER_CLOSED_RAD))
+        reach_hi = command_to_measured_rad(np.full(2, GRIPPER_OPEN_RAD))
+        clipped = np.clip(want, reach_lo, reach_hi)
+        assert np.abs(got - clipped).max() < 1e-9, (
+            "{!r}: aiming at measured {} lands at {}, not the nearest reachable "
+            "{}".format(prompt, want, got, clipped)
+        )
+    print("  gripper calibration inverts (ready aims at a command)  OK")
 
     # 4. every ready ramp must clear our own gate from the worst start we know
     #    of -- the pose the 2026-09-03 dry run actually began from.

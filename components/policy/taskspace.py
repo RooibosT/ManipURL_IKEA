@@ -127,6 +127,25 @@ def command_to_measured_rad(command_rad: np.ndarray) -> np.ndarray:
     return np.clip(out, GRIPPER_CLOSED_RAD, GRIPPER_OPEN_RAD)
 
 
+def measured_to_command_rad(measured_rad: np.ndarray) -> np.ndarray:
+    """Inverse of :func:`command_to_measured_rad`.
+
+    The dataset records the MEASURED jaw, so a value taken from it -- the
+    per-task start in GRIPPER_RESET_RAD_BY_TASK, say -- is where we want the
+    jaw to end up, not what to ask for. Commanding it raw lands 0.15 rad off on
+    the `holding a leg` value, which is the same size of error the calibration
+    exists to remove.
+    """
+    meas = np.asarray(measured_rad, dtype=np.float64).reshape(-1)
+    if meas.size != 2:
+        raise ValueError("measured_rad must be (2,), got {}".format(meas.size))
+    out = np.empty(2, dtype=np.float64)
+    for i, side in enumerate(("left", "right")):
+        scale, offset = GRIPPER_CMD_TO_MEASURED[side]
+        out[i] = (meas[i] - offset) / scale
+    return np.clip(out, GRIPPER_CLOSED_RAD, GRIPPER_OPEN_RAD)
+
+
 def reset_gripper_rad(prompt: str) -> np.ndarray:
     """Assumed (left, right) measured jaw at the start of ``prompt``'s task."""
     pair = GRIPPER_RESET_RAD_BY_TASK.get(
