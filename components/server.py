@@ -122,12 +122,18 @@ class Policy:
             "left_wrist": "left_wrist",
             "right_wrist": "right_wrist",
         }
-        # The Dex1-1 rig publishes no hand state, so the gripper dims of the
-        # 46-dim state are fed from our own last command, run through the
-        # training rig's command->measured calibration. None until the first
-        # observation: the seed is per-task and the prompt arrives with the
-        # observation, not at reset.
+        # The Dex1-1 rig publishes no hand state, so we carry two jaw values
+        # and they are NOT interchangeable:
+        #   _gripper_q   the MEASURED jaw the model reads, in its state dims
+        #   _gripper_cmd the last COMMAND we published, for holding it
+        # They differ by the training rig's calibration. Keeping one field and
+        # converting at each use is what let the calibration be applied to its
+        # own output every tick -- a geometric drift toward 4.45/4.61 rad that
+        # opens a closed hand in about three ticks and drops whatever it holds.
+        # Both are None until the first observation: the seed is per-task and
+        # the prompt arrives with the observation, not at reset.
         self._gripper_q: Optional[np.ndarray] = None
+        self._gripper_cmd: Optional[np.ndarray] = None
         # Newest good frame per camera key: the organizer's server drops a
         # wrist key when that camera fails, and the checkpoint needs all three.
         self._last_images: Dict[str, np.ndarray] = {}
@@ -155,7 +161,11 @@ class Policy:
         ActionError, on the bench, with the robot holding its last command.
         Clamp here rather than discover it there.
         """
-        rows = min(self.args.execute_rows, self.policy.horizon)
+        # max(1, ...): --execute-rows 0 declared a 0-row chunk and then raised
+        # IndexError on gripper_targets[-1] at the first observation, killing
+        # the control loop with the robot live; negatives sliced from the end
+        # and published a chunk the metadata had not declared.
+        rows = max(1, min(self.args.execute_rows, self.policy.horizon))
         capped = rows
         while capped > 1 and self.encoder.rows_for(capped) > MAX_CHUNK_LENGTH:
             capped -= 1
@@ -311,7 +321,7 @@ class Policy:
                 file=sys.stderr,
             )
             arm_targets = np.tile(measured_arm, (execute_rows, 1))
-            gripper_targets = np.tile(self._gripper_q, (execute_rows, 1))
+            gripper_targets = np.tile(self._gripper_cmd, (execute_rows, 1))
 
         actions = self.encoder.encode(
             arm_targets, gripper_targets, waist_q=body_q[12:15]
@@ -321,15 +331,15 @@ class Policy:
         # training rig is an affine function of the command rather than a copy
         # of it, so go through that calibration rather than feeding the command
         # back raw -- it cuts the left hand's error from 0.170 to 0.008 rad.
-        self._gripper_q = command_to_measured_rad(
-            np.asarray(gripper_targets[-1], dtype=np.float64).reshape(2)
-        )
+        self._gripper_cmd = np.asarray(gripper_targets[-1], dtype=np.float64).reshape(2)
+        self._gripper_q = command_to_measured_rad(self._gripper_cmd)
         return {"actions": actions}
 
     def reset(self) -> dict:
         """Called once at the start of every attempt. Drop episode state."""
         self.policy.reset()
         self._gripper_q = None          # re-seeded from the next prompt
+        self._gripper_cmd = None
         self._last_images.clear()
         self._degraded_since = None
         self._blocked_logged_at = 0.0
@@ -346,8 +356,11 @@ class Policy:
 
     def _infer(self, images, body_q, base_quat, prompt):
         if isinstance(self.policy, HoldStillPolicy):
+            # HoldStillPolicy echoes this straight back as the action, so it
+            # wants the COMMAND. The real policy wants the measurement, because
+            # its argument goes into the model's state block.
             return self.policy.infer(
-                images, body_q, base_quat, self._gripper_q, prompt
+                images, body_q, base_quat, self._gripper_cmd, prompt
             )
         return self.policy.infer(
             images,
@@ -383,6 +396,7 @@ class Policy:
         if self._gripper_q is not None:
             return
         self._gripper_q = self._target_gripper_q(prompt)
+        self._gripper_cmd = measured_to_command_rad(self._gripper_q)
         source = ("--initial-gripper-rad"
                   if self.args.initial_gripper_rad is not None
                   else "training-set start for {!r}".format(prompt))
@@ -442,9 +456,9 @@ class Policy:
             # single chunk and the arms would start moving while the jaw was
             # still opening, which is exactly the ordering it exists to prevent.
             arm = np.tile(measured, (rows, 1))
-            grip = self._ramp(measured_to_command_rad(self._gripper_q), grip_target,
-                              rows, self.args.ready_gripper_velocity_rad_s,
-                              self.args.model_row_hz)
+            grip = self._ramp(self._gripper_cmd, grip_target, rows,
+                               self.args.ready_gripper_velocity_rad_s,
+                               self.args.model_row_hz)
             if now - self._ready_started_at >= self.args.ready_hand_dwell_s:
                 # No assignment here: act() already ends by running the last
                 # published command back through the calibration, which is the
@@ -525,7 +539,7 @@ class Policy:
     def _hold_still_targets(self, body_q: np.ndarray):
         arm = np.concatenate((body_q[15:22], body_q[22:29]))
         rows = self.execute_rows
-        return np.tile(arm, (rows, 1)), np.tile(self._gripper_q, (rows, 1))
+        return np.tile(arm, (rows, 1)), np.tile(self._gripper_cmd, (rows, 1))
 
     @staticmethod
     def _images_from(obs: dict) -> dict:
