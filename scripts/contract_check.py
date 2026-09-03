@@ -34,7 +34,11 @@ from components.policy.bct import (  # noqa: E402
     Gr00tBctPolicy,
     build_state,
 )
-from components.policy.kinematics import G1WristKinematics  # noqa: E402
+from components.policy.kinematics import (  # noqa: E402
+    ACTION_EE_OFFSET_M,
+    TRAINING_EE_OFFSET_M,
+    G1WristKinematics,
+)
 from components.policy.taskspace import (  # noqa: E402
     JointChunkError,
     TaskSpaceEncoder,
@@ -56,6 +60,9 @@ def main() -> int:
     parser.add_argument("--horizon", type=int, default=40)
     parser.add_argument("--execute-rows", type=int, default=8)
     parser.add_argument("--row-hz", type=float, default=50.0)
+    parser.add_argument("--ee-offset-m", type=float, default=ACTION_EE_OFFSET_M,
+                        help="Tool offset of the PUBLISHED pose only. The state "
+                             "block stays at the training offset.")
     parser.add_argument("--repeats", type=int, default=4,
                         help="Inferences to time. The first includes warmup.")
     args = parser.parse_args()
@@ -70,7 +77,10 @@ def main() -> int:
         if not ok:
             failures.append(label)
 
-    kinematics = G1WristKinematics()
+    # Two conventions, exactly as server.py builds them: the state keeps the
+    # training offset, the wire carries the organizer's (zero).
+    kinematics = G1WristKinematics(ee_offset_m=TRAINING_EE_OFFSET_M)
+    action_kinematics = G1WristKinematics(ee_offset_m=args.ee_offset_m)
     body_q = 0.15 * np.sin(np.arange(29) * 0.2)
     base_quat = np.array([0.9995, 0.01, 0.02, 0.0])
     base_quat /= np.linalg.norm(base_quat)
@@ -80,6 +90,12 @@ def main() -> int:
     state = build_state(body_q, base_quat, gripper_q, kinematics)
     dims = sum(v.shape[-1] for v in state.values())
     check("46 dims across 9 groups", dims == 46, "got {}".format(dims))
+    check("state uses the TRAINING ee offset",
+          kinematics.ee_offset_m == TRAINING_EE_OFFSET_M,
+          "{} m".format(kinematics.ee_offset_m))
+    check("published action uses the WIRE ee offset",
+          action_kinematics.ee_offset_m == args.ee_offset_m,
+          "{} m".format(action_kinematics.ee_offset_m))
 
     print("\n2. loading the checkpoint")
     started = time.time()
@@ -145,7 +161,7 @@ def main() -> int:
         check("joint gates", True)
     except JointChunkError as exc:
         check("joint gates", False, str(exc))
-    encoder = TaskSpaceEncoder(kinematics, output_row_hz=args.row_hz)
+    encoder = TaskSpaceEncoder(action_kinematics, output_row_hz=args.row_hz)
     chunk = encoder.encode(arm_x, grip_x, waist_q=body_q[12:15])
     try:
         DecoupledSink.validate_chunk(chunk)

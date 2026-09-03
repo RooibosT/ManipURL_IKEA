@@ -149,9 +149,30 @@ cameras:
     trained on, which costs accuracy silently.
 
 control:
+  # Tool offset, in metres along the wrist_yaw link's local +x. TWO values, and
+  # they are not interchangeable -- see INSTRUCTIONS.md §6.2.
+  action_ee_offset_m: 0.0         # what we PUBLISH. The organizer's IK targets
+                                  # the bare wrist_yaw_link origin (confirmed
+                                  # 2026-09-03, reversing their 08-28 answer).
+  state_ee_offset_m: 0.05         # what the MODEL READS. A property of the
+                                  # checkpoint: its left_eef/right_eef state
+                                  # blocks were computed with this during
+                                  # training, so it must never track the value
+                                  # above. The server declares both in its
+                                  # metadata frame.
+  ee_frame: pelvis                # FK with the measured waist. Confirmed by the
+                                  # organizer's own IK replay: 100% accept at
+                                  # ~0.0000 residual, at a run where |waist|
+                                  # median 0.228 rad put the pelvis and torso
+                                  # frames 7.4 cm apart.
   model_horizon_rows: 40          # 1.33 s of trajectory at 30 Hz
   executed_rows_per_inference: 16 # 0.5 s of trajectory, then replan
   published_row_hz: 50            # model rows resampled in joint space
+  measured_publish_period_ms: 304 # MEASURED ON THE REAL ROBOT, 2026-09-03 dry
+                                  # run: 2,222 chunks over 11.4 min, median 304
+                                  # ms between publishes (p10 297, p90 323, max
+                                  # 350), no gap over 500 ms. State arrived at
+                                  # 48.6 Hz, cameras at 29.5 Hz.
   measured_round_trip_ms: 190     # Orin client -> Thor -> chunk in hand, closed
                                   # loop from the digest images: 184-199 ms
                                   # against 182-187 ms of inference, so the link

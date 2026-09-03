@@ -27,7 +27,7 @@ Three things this module does that the boundary cannot check for us:
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
@@ -39,6 +39,22 @@ from .kinematics import G1WristKinematics, matrix_to_quat_wxyz
 # -1 open, +1 closed.
 GRIPPER_CLOSED_RAD = 0.0
 GRIPPER_OPEN_RAD = 5.40
+
+# What we ASSUME the jaw is at when an attempt starts. This is a different
+# quantity from GRIPPER_OPEN_RAD above, which is the mechanical end stop that
+# anchors the command scale -- conflating the two put a value 0.93 rad outside
+# the policy's own range into the first inference of every attempt.
+#
+# Measured from the 2026-09-03 dry run (log.jsonl, 34,306 published rows): the
+# policy's gripper output sits at 4.46 rad +/- 0.01 for the entire run and
+# never approaches either end stop, so 4.46 -- not the 5.40 end stop -- is what
+# it expects to read back as "open". It only affects the first inference after
+# reset, because from then on we feed back our own last command; but that is
+# the inference that decides an attempt's opening move.
+#
+# RE-VERIFY on the current 3-task checkpoint: the figure above is from the
+# five-task bct-relarm build the dry run actually ran.
+GRIPPER_RESET_RAD = 4.46
 
 # --- Joint-domain gates, measured on the training set ----------------------
 # Absolute targets predict the teleop command, which sits off the measured
@@ -222,24 +238,3 @@ class TaskSpaceEncoder:
             return max(model_rows, 0)
         duration = (model_rows - 1) / self.model_row_hz
         return int(np.floor(duration * self.output_row_hz)) + 1
-
-
-def hold_still_chunk(
-    encoder: TaskSpaceEncoder,
-    arm_q: np.ndarray,
-    gripper_q: np.ndarray,
-    waist_q: Optional[np.ndarray],
-    model_rows: int,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Repeat the measured pose: a valid chunk that commands no motion.
-
-    Returned as joint targets so it takes the same validation and FK path a
-    real inference does -- that is the point of it, and what makes conformance
-    exercise the encoder rather than a hard-coded array of zeros.
-    """
-    arm = np.asarray(arm_q, dtype=np.float64).reshape(-1)
-    grip = np.asarray(gripper_q, dtype=np.float64).reshape(-1)
-    return (
-        np.tile(arm, (model_rows, 1)),
-        np.tile(grip, (model_rows, 1)),
-    )

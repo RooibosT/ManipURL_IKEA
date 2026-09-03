@@ -9,16 +9,21 @@ silent:
     inputs are noise -- ``state_dropout`` makes the policy robust to a missing
     state, not to a wrong one. Convention, which must not drift:
     ``g1_body29_hand14.urdf``, **waist held at zero** so the pose is in the
-    torso frame, the ``wrist_yaw`` link origin translated 0.05 m along its
-    local +x, orientation as extrinsic-xyz Euler (URDF/ROS RPY).
+    torso frame, the ``wrist_yaw`` link origin translated
+    ``TRAINING_EE_OFFSET_M`` along its local +x, orientation as extrinsic-xyz
+    Euler (URDF/ROS RPY).
 
   * The ACTION we publish on the decoupled lane is an end-effector pose for the
     organizer's IK adapter. That one wants the robot's actual pose, so it uses
-    the **measured waist** and returns a rotation matrix we turn into a w-first
-    quaternion without a detour through Euler angles.
+    the **measured waist** and ``ACTION_EE_OFFSET_M`` (zero -- their solver
+    targets the bare link origin), and returns a rotation matrix we turn into a
+    w-first quaternion without a detour through Euler angles.
 
 ``wrist_pose`` (state) and ``wrist_pose_matrix`` (action) therefore share a
-chain walk but not a waist policy. Both are exercised by conformance.
+chain walk but neither a waist policy nor a tool offset. Both are exercised by
+conformance. Build ONE ``G1WristKinematics`` per convention -- the URDF parse is
+cached, so the second instance is free -- and never route both consumers through
+the same offset.
 
 Adapted from url_groot_deploy/g1_kinematics.py, which is the file the training
 pipeline and the team's own Thor deployment already agree on.
@@ -34,8 +39,23 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 
 # Distance from the wrist_yaw link origin to the point the dataset calls the
-# end effector, along the link's local +x.
-DEFAULT_EE_OFFSET_M = 0.05
+# end effector, along the link's local +x. This is a property of the CHECKPOINT,
+# not a tuning knob: the 46-dim state's left_eef/right_eef blocks were computed
+# with it during training, so the observation path must keep it forever.
+TRAINING_EE_OFFSET_M = 0.05
+
+# What the organizer's IK adapter wants on the wire. It targets the raw
+# wrist_yaw_link origin with NO tool offset -- confirmed by the IAC evaluation
+# team on 2026-09-03, reversing their 2026-08-28 answer. Applying our training
+# offset here put every published pose 5.00 cm out and held IK accept to
+# 43.3% offline (100.0% with the offset removed, residual ~0).
+#
+# These two MUST stay separate. A single shared offset is what made
+# `--ee-offset-m 0` a trap: it fixes the wire and silently moves 6 of the 46
+# state dims 5 cm off the training distribution.
+ACTION_EE_OFFSET_M = 0.0
+
+DEFAULT_EE_OFFSET_M = TRAINING_EE_OFFSET_M   # back-compat for callers
 
 DEFAULT_URDF = (
     Path(__file__).resolve().parents[2] / "assets" / "g1" / "g1_body29_hand14.urdf"

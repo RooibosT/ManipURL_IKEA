@@ -53,14 +53,19 @@ from components.policy.bct import (  # noqa: E402
     HoldStillPolicy,
 )
 from components.imagecodec import decode_images  # noqa: E402
-from components.policy.kinematics import G1WristKinematics  # noqa: E402
+from components.policy.kinematics import (  # noqa: E402
+    ACTION_EE_OFFSET_M,
+    TRAINING_EE_OFFSET_M,
+    G1WristKinematics,
+)
 from components.policy.taskspace import (  # noqa: E402
-    GRIPPER_OPEN_RAD,
+    GRIPPER_RESET_RAD,
     JointChunkError,
     TaskSpaceEncoder,
     validate_joint_chunk,
 )
 from components.transport import serve_policy  # noqa: E402
+from boundary.actions import MAX_CHUNK_LENGTH  # noqa: E402  (read-only constant)
 
 LANE = "decoupled"
 
@@ -90,11 +95,21 @@ class Policy:
                 )
             )
         self.args = args
+        # TWO kinematics, one per convention, and they must not be merged.
+        # `kinematics` feeds the model's 46-dim state and is pinned to the
+        # offset the checkpoint was trained with. `action_kinematics` feeds the
+        # wire and carries whatever the organizer's IK adapter wants (zero).
+        # Sharing one instance is what made --ee-offset-m a trap: it moved 6 of
+        # the 46 state dims off the training distribution as a side effect of
+        # fixing the wire. The URDF parse is cached, so the pair is free.
         self.kinematics = G1WristKinematics(
+            urdf_path=args.urdf, ee_offset_m=TRAINING_EE_OFFSET_M
+        )
+        self.action_kinematics = G1WristKinematics(
             urdf_path=args.urdf, ee_offset_m=args.ee_offset_m
         )
         self.encoder = TaskSpaceEncoder(
-            kinematics=self.kinematics,
+            kinematics=self.action_kinematics,
             model_row_hz=args.model_row_hz,
             output_row_hz=args.row_hz,
             use_measured_waist=(args.ee_frame == "pelvis"),
@@ -116,6 +131,35 @@ class Policy:
         self._prompts_warned = set()
 
         self.policy = self._load_policy()
+        self.execute_rows = self._clamp_execute_rows()
+
+    def _clamp_execute_rows(self) -> int:
+        """Model rows we execute, capped so the encoded chunk fits the contract.
+
+        Resampling 30 Hz model rows up to 50 Hz multiplies them by 5/3, and
+        `DecoupledSink` rejects anything longer than MAX_CHUNK_LENGTH rows. At
+        those rates the ceiling is 38 model rows -- so `--execute-rows 40`, the
+        obvious "execute the whole horizon" value and equal to `--horizon`'s
+        own default, would have the client die on its FIRST publish with an
+        ActionError, on the bench, with the robot holding its last command.
+        Clamp here rather than discover it there.
+        """
+        rows = min(self.args.execute_rows, self.policy.horizon)
+        capped = rows
+        while capped > 1 and self.encoder.rows_for(capped) > MAX_CHUNK_LENGTH:
+            capped -= 1
+        if capped != self.args.execute_rows:
+            print(
+                "[server] --execute-rows {} -> {}: {} model rows at {:g} Hz "
+                "resample to {} rows at {:g} Hz, over the contract's {}-row "
+                "limit.".format(
+                    self.args.execute_rows, capped, rows, self.args.model_row_hz,
+                    self.encoder.rows_for(rows), self.args.row_hz,
+                    MAX_CHUNK_LENGTH,
+                ),
+                file=sys.stderr,
+            )
+        return capped
 
     # -- setup --------------------------------------------------------------
 
@@ -181,7 +225,7 @@ class Policy:
     @property
     def metadata(self) -> dict:
         """Announced to the client on connect, before any observation."""
-        execute_rows = min(self.args.execute_rows, self.policy.horizon)
+        execute_rows = self.execute_rows
         return {
             "lane": LANE,
             # Rows in the chunk we return, at action_row_hz -- not the model's
@@ -206,7 +250,8 @@ class Policy:
             "policy": type(self.policy).__name__,
             "checkpoint": self.args.checkpoint or "<hold-still>",
             "ee_frame": self.args.ee_frame,
-            "ee_offset_m": self.args.ee_offset_m,
+            "ee_offset_m": self.args.ee_offset_m,          # on the wire
+            "state_ee_offset_m": TRAINING_EE_OFFSET_M,     # into the model
         }
 
     def act(self, obs: dict) -> dict:
@@ -229,7 +274,7 @@ class Policy:
                 images, body_q, base_quat, prompt
             )
 
-        execute_rows = min(self.args.execute_rows, len(arm_targets))
+        execute_rows = min(self.execute_rows, len(arm_targets))
         arm_targets = arm_targets[:execute_rows]
         gripper_targets = gripper_targets[:execute_rows]
 
@@ -301,7 +346,7 @@ class Policy:
 
     def _hold_still_targets(self, body_q: np.ndarray):
         arm = np.concatenate((body_q[15:22], body_q[22:29]))
-        rows = min(self.args.execute_rows, self.policy.horizon)
+        rows = self.execute_rows
         return np.tile(arm, (rows, 1)), np.tile(self._gripper_q, (rows, 1))
 
     @staticmethod
@@ -419,19 +464,28 @@ def build_parser() -> argparse.ArgumentParser:
                          default=os.environ.get("PEVAL_HEAD_CAMERA", "ego_view_left"),
                          help="Boundary key for the head view. The checkpoint was "
                               "trained on the LEFT eye.")
-    control.add_argument("--initial-gripper-rad", type=float, default=GRIPPER_OPEN_RAD,
+    control.add_argument("--initial-gripper-rad", type=float, default=GRIPPER_RESET_RAD,
                          help="Assumed gripper position at reset, in Dex1-1 motor "
-                              "radians (0 closed, 5.40 open). No hand state is "
-                              "published for a Dex1-1 rig.")
+                              "radians (0 closed, 5.40 fully open). No hand state is "
+                              "published for a Dex1-1 rig, so this seeds the first "
+                              "inference and our own last command feeds every one "
+                              "after it. Default is the policy's own observed 'open' "
+                              "value from the 2026-09-03 dry run, not the mechanical "
+                              "end stop.")
 
     kin = parser.add_argument_group("kinematics")
     kin.add_argument("--ee-frame", choices=("pelvis", "torso"), default="pelvis",
                      help="Frame of the published end-effector poses. 'pelvis' runs "
                           "FK with the measured waist; 'torso' zeroes it, matching "
                           "the checkpoint's own state block. See INSTRUCTIONS.md.")
-    kin.add_argument("--ee-offset-m", type=float, default=0.05,
-                     help="Distance from the wrist_yaw link origin to the commanded "
-                          "point, along the link's local +x.")
+    kin.add_argument("--ee-offset-m", type=float, default=ACTION_EE_OFFSET_M,
+                     help="Tool offset of the PUBLISHED pose only, in metres along "
+                          "the wrist_yaw link's local +x. 0 targets the bare link "
+                          "origin, which is what the organizer's IK adapter wants "
+                          "(confirmed 2026-09-03). The model's own state block is "
+                          "NOT affected by this flag -- it stays pinned at the "
+                          "{:g} m the checkpoint was trained with.".format(
+                              TRAINING_EE_OFFSET_M))
     kin.add_argument("--urdf", type=Path, default=None,
                      help="Override the bundled assets/g1/g1_body29_hand14.urdf.")
 

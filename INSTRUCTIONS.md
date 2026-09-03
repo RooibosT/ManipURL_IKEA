@@ -208,6 +208,11 @@ its last command. Only your e-stop brings it to a safe state.
 
 ## 5 · What we need from you
 
+**Read §9 first if you are scheduling the re-run.** The four dry-run attempts
+ran the checkpoint we certified at onboarding, which is no longer the one we
+ship. Which of your findings carry over depends on that, and one of them
+does not.
+
 **Stereo `ego_view_left`, please.** Our server declares
 `["ego_view_left", "left_wrist", "right_wrist"]`. The checkpoint's head view was
 trained on `cam_0` of the source recording, which is the **left eye** of the
@@ -228,18 +233,46 @@ says why every 5 seconds rather than feeding the policy a black frame.
 
 ## 6 · Open questions on the decoupled contract
 
-We had to guess three things. All three are configurable, so a one-line answer
-is enough to correct any of them, and none needs a rebuild.
+Two of these are now **closed** by the 2026-09-03 dry run. The rest still stand,
+and all of them are flags, so an answer costs no rebuild.
 
-1. **What frame are `left_ee_pos` / `right_ee_pos` in?** We publish the wrist
-   pose in the **pelvis** frame, from FK with the measured waist. Switch with
-   `--ee-frame torso` (waist held at zero, which is the frame our checkpoint's
-   own state block uses).
+1. ~~**What frame are `left_ee_pos` / `right_ee_pos` in?**~~ **ANSWERED — pelvis,
+   by your own data.** We publish the wrist pose in the **pelvis** frame, from FK
+   with the measured waist, and your offline IK test confirms that is what your
+   solver expects. The reasoning, because it is not obvious: your `(target, seed)`
+   replay reached **100.0% accept at ~0.0000 median residual** once the tool
+   offset was removed. A residual that small is only possible if your FK and our
+   target agree on the waist, and the waist was **not** near zero during the run
+   — `log.jsonl` puts `waist_yaw` at a steady **-0.234 rad** (|waist| median
+   0.228, max 0.307). At that waist the pelvis- and torso-frame poses are
+   **7.4 cm apart** (median over the run; 6.0-11.3 cm range). A torso-frame
+   mismatch would have shown up as centimetres of residual, not 0.0000. So
+   `--ee-frame pelvis` stays, and we are no longer guessing.
 
-2. **Where is the commanded point on the end effector?** We use the
-   `wrist_yaw` link origin translated **0.05 m** along its local +x, which is
-   the convention the checkpoint was trained against. Change with
-   `--ee-offset-m`.
+   Say so if you read that differently — it is still one flag either way.
+
+2. ~~**Where is the commanded point on the end effector?**~~ **ANSWERED — zero
+   offset, and fixed on our side.** Your IK targets the bare `wrist_yaw_link`
+   origin; we were publishing it translated 0.05 m along local +x, which is
+   exactly the 5.00 cm error you measured. Fixed.
+
+   The fix is the one you specified, and only that: the **published pose** now
+   uses a zero offset while the **46-dim state block keeps the 0.05 m** the
+   checkpoint was trained with. Those were one shared value in our code, which
+   is precisely the trap you flagged — a blanket `--ee-offset-m 0` would have
+   fixed the wire and silently moved 6 of the 46 state dims 5 cm off the
+   training distribution. They are now two independent values
+   (`TRAINING_EE_OFFSET_M` and `ACTION_EE_OFFSET_M` in
+   `components/policy/kinematics.py`), the server declares both in its metadata
+   frame (`ee_offset_m` for the wire, `state_ee_offset_m` for the model), and
+   `scripts/check_conventions.py` fails if they are ever merged again.
+
+   Verified by replaying your `log.jsonl` states through the new code: every
+   published pose moves **exactly 5.000 cm**, the state eef blocks move
+   **0.000000 cm**, and the quaternion columns are bit-identical.
+
+   `--ee-offset-m` still exists and is now the wire offset alone, so if your
+   solver's convention moves again it is one flag and no rebuild.
 
 3. **What does the Thor<->Orin link negotiate?** One command on your side
    (`ethtool <iface> | grep Speed`) and we stop guessing. We ship the
@@ -283,6 +316,43 @@ is enough to correct any of them, and none needs a rebuild.
    you would rather not touch the boundary, tell us and we will stop asking; we
    just would rather you knew that no team on a Dex1-1 rig can close that loop
    today.
+
+   **The dry run gave this question data, and it is worth reading before the
+   next session.** Your Finding 4 is real as a measurement — we reproduce your
+   numbers exactly off `log.jsonl` — but the mechanism is this open question,
+   not a stuck output:
+
+   Because no jaw position is on the wire, we feed the model **our own last
+   command** as its gripper state. That closes a loop with no external input in
+   it. Over 34,306 published rows the gripper state we handed the policy was
+   constant at **4.46 rad ±0.01**, and its output was correspondingly constant
+   (left 4.271-4.500 rad, right 4.408-4.500 rad; **0.23 rad of travel in a
+   5.4 rad stroke**, no trend across six windows of the run). A fixed point with
+   only one way out: vision.
+
+   Which is the part we would ask you to weigh before attributing this to the
+   policy. Vision never advanced — IK accept was 15-20% (Finding 1), so the arm
+   held its last valid pose ~80% of the time and never reached the leg. **A pick
+   policy that has not reached the object should not close its gripper**; that is
+   correct behaviour, not a defect. This is the same confound you accepted for
+   Finding 5, and it applies to Finding 4 for the same reason and in the same
+   run: the gripper is conditioned on the same scene that never changed. We do
+   not think Finding 4 can be separated from Finding 1 on this data either.
+
+   Two things we did anyway, so the next run starts cleaner:
+
+   * **Our reset seed was wrong and is fixed.** We were seeding the first
+     inference of every attempt with 5.40 rad, the mechanical end stop, when the
+     policy's own observed "open" is 4.46 — a 0.93 rad excursion outside its
+     range on the one inference that decides an attempt's opening move. The
+     constant that anchors the command scale and the constant that seeds the
+     state were the same number in our code; they are now separate
+     (`GRIPPER_RESET_RAD`), defaulted from your log.
+   * **We will re-measure the gripper channel on the current checkpoint.** See
+     §9 — the build you ran is not the build we now ship, and Finding 4's
+     numbers belong to the old one.
+
+   None of that closes the loop. Only a measured jaw position does.
 
 Two smaller ones we resolved by following the template's own reference: that
 `base_height_cmd = 0` and `torso_rpy = 0` mean *neutral / hold* rather than an
@@ -338,3 +408,42 @@ for both machines, but the README's hardware section names
 `nvcr.io/nvidia/cuda:13.0.0-devel-ubuntu24.04` for the Thor, since JetPack 7
 uses unified Arm CUDA and there is no matching `l4t-*` tag. We followed the
 README as the newer of the two. Say the word if you want the `l4t-*` form.
+
+---
+
+## 9 · The dry run tested a checkpoint we no longer ship
+
+The 2026-09-03 report names `gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40`, and
+notes the build was unchanged from onboarding certification — correct. But we
+swapped the checkpoint after that certification and before the dry run was
+scheduled, so what ran on the robot is one generation behind
+`manifest.yaml`:
+
+| | ran on the robot 09-03 | what we ship now |
+|---|---|---|
+| Checkpoint | `bct-relarm-aug-30hz-h40` | `URL-RFM/…-ikea-3task-46d-30hz-h40` |
+| Trained prompts | five | **three** (`rotate table base`, `flip table` dropped) |
+| Head video key | `cam_head` | **`cam_left_high`** |
+| Waist action group | present, discarded by us | **absent from the action space** |
+| State / horizon / denoising | 46-dim, 40 @ 30 Hz, 4 steps | unchanged |
+| Gripper units and action space | Dex1-1 rad, arms+grippers | unchanged |
+
+Nothing in the boundary-facing contract moved, which is why the plumbing
+result stands unchanged. What it means per finding:
+
+* **Finding 1 (tool frame) transfers completely.** It is our FK convention, not
+  the checkpoint's. Fixed, and validated by replaying your `log.jsonl`.
+* **Finding 3 (safety) is unaffected.** Our action space never contained joint
+  velocity in either build.
+* **Finding 4 (gripper) — mechanism transfers, numbers do not.** The gripper
+  units, the command mapping and the open-loop state feedback are byte-identical
+  between the two builds, so the fixed point described in §6.5 is still there.
+  But 4.271-4.500 rad is the *old* checkpoint's output. We are re-measuring on
+  the current one and will send the figures before the next session.
+* **Finding 5 (repetitive motion) is not testable on this data** — and now for
+  two reasons rather than one: the IK confound you already identified, plus a
+  different policy.
+
+We are not asking you to re-run anything you had not already planned. This is
+so the next report is not comparing across a checkpoint boundary without
+knowing it.
