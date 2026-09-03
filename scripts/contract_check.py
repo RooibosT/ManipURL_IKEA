@@ -42,6 +42,7 @@ from components.policy.kinematics import (  # noqa: E402
 from components.policy.taskspace import (  # noqa: E402
     JointChunkError,
     TaskSpaceEncoder,
+    reset_gripper_rad,
     validate_joint_chunk,
 )
 
@@ -84,7 +85,12 @@ def main() -> int:
     body_q = 0.15 * np.sin(np.arange(29) * 0.2)
     base_quat = np.array([0.9995, 0.01, 0.02, 0.0])
     base_quat /= np.linalg.norm(base_quat)
-    gripper_q = np.array([5.4, 5.4])
+    # The jaw state the server would actually seed for this prompt. 5.4 is the
+    # mechanical end stop, above both the training maximum (5.3921) and what
+    # the jaw can physically reach (5.362 / 5.346) -- feeding it would run this
+    # check's inference on a state the checkpoint never saw, which is the one
+    # thing a contract check must not do.
+    gripper_q = reset_gripper_rad(TRAINED_PROMPTS[0])
 
     print("\n1. observation state")
     state = build_state(body_q, base_quat, gripper_q, kinematics)
