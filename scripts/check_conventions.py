@@ -16,6 +16,12 @@
 3. THE GRIPPER STATE WE SYNTHESIZE STAYS INSIDE THE TRAINING DISTRIBUTION. No
    jaw position is on the wire, so we manufacture that model input; the numbers
    below are pinned to what URL-RFM/IKEA_pickuptheleg actually contains.
+
+4. THE READY MOVE STAYS INSIDE OUR OWN JOINT GATE. We publish poses and the
+   organizer's adapter picks the joint velocity that realises them, so the only
+   speed control we have is how small a step we ask for. A ramp that trips
+   MAX_ARM_STEP_RAD would be rejected by our own gate at run time -- on the
+   bench, mid-move.
 """
 
 from __future__ import annotations
@@ -28,7 +34,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from boundary.actions import MAX_CHUNK_LENGTH, DecoupledSink  # noqa: E402
-from components.policy.bct import build_state  # noqa: E402
+from components.policy.bct import READY_ARM_Q_BY_TASK, TRAINED_PROMPTS, build_state  # noqa: E402
+from components.server import Policy  # noqa: E402
 from components.policy.kinematics import (  # noqa: E402
     ACTION_EE_OFFSET_M,
     TRAINING_EE_OFFSET_M,
@@ -38,10 +45,13 @@ from components.policy.taskspace import (  # noqa: E402
     GRIPPER_CLOSED_RAD,
     GRIPPER_OPEN_RAD,
     GRIPPER_RESET_RAD_BY_TASK,
+    MAX_ARM_STEP_RAD,
+    MAX_FIRST_ARM_ERROR_RAD,
     TaskSpaceEncoder,
     command_to_measured_rad,
     gripper_rad_to_command,
     reset_gripper_rad,
+    validate_joint_chunk,
 )
 
 # Measured off URL-RFM/IKEA_pickuptheleg, 322 episodes / 149,437 frames.
@@ -125,6 +135,25 @@ def main() -> int:
     assert abs(float(gripper_rad_to_command(np.array([GRIPPER_OPEN_RAD]))[0]) + 1.0) < 1e-9
     assert abs(float(gripper_rad_to_command(np.array([GRIPPER_CLOSED_RAD]))[0]) - 1.0) < 1e-9
     print("  open/closed map to boundary -1 / +1 exactly         OK")
+
+    # 4. every ready ramp must clear our own gate from the worst start we know
+    #    of -- the pose the 2026-09-03 dry run actually began from.
+    DRY_RUN_START = np.array([
+        -0.164, 0.068, 0.093, 0.928, -0.061, -0.715, -0.023,
+        0.071, 0.007, -0.053, 0.468, -0.016, -0.430, 0.066])
+    assert set(READY_ARM_Q_BY_TASK) == set(TRAINED_PROMPTS), (
+        "every trained prompt needs a start pose; missing {}".format(
+            set(TRAINED_PROMPTS) - set(READY_ARM_Q_BY_TASK))
+    )
+    for prompt, target in READY_ARM_Q_BY_TASK.items():
+        target = np.asarray(target)
+        for start in (DRY_RUN_START, np.zeros(14), target):
+            rows = Policy._ramp(start, target, 16, 0.35)
+            grip = np.tile(reset_gripper_rad(prompt), (16, 1))
+            validate_joint_chunk(rows, grip, start)     # raises if the gate trips
+            step = float(np.abs(np.diff(rows, axis=0)).max()) if len(rows) > 1 else 0.0
+            assert step <= MAX_ARM_STEP_RAD, "ramp step {:.3f} trips the gate".format(step)
+    print("  ready ramps clear the joint gate for all 3 tasks    OK")
 
     print("\nALL CONVENTION CHECKS PASSED")
     return 0

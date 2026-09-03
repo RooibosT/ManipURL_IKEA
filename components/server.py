@@ -48,6 +48,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from components.policy.bct import (  # noqa: E402
+    READY_ARM_Q_BY_TASK,
     TRAINED_PROMPTS,
     Gr00tBctPolicy,
     HoldStillPolicy,
@@ -133,6 +134,11 @@ class Policy:
         self._blocked_logged_at = 0.0
         self._gate_failures = 0
         self._prompts_warned = set()
+        # Ready move: hands, then arms, then the policy. None until the first
+        # observation names the task.
+        self._ready_phase = "hands" if args.ready_move else "done"
+        self._ready_since: Optional[float] = None
+        self._ready_started_at: Optional[float] = None
 
         self.policy = self._load_policy()
         self.execute_rows = self._clamp_execute_rows()
@@ -253,6 +259,7 @@ class Policy:
             "accepts_jpeg": True,
             "policy": type(self.policy).__name__,
             "checkpoint": self.args.checkpoint or "<hold-still>",
+            "ready_move": self.args.ready_move,
             "ee_frame": self.args.ee_frame,
             "ee_offset_m": self.args.ee_offset_m,          # on the wire
             "state_ee_offset_m": TRAINING_EE_OFFSET_M,     # into the model
@@ -267,7 +274,12 @@ class Policy:
         self._seed_gripper(prompt)
         images, blocked = self._collect_images(self._images_from(obs))
 
-        if blocked and self.policy.needs_images:
+        if self._ready_phase != "done":
+            # The policy does not run until the upper body is where the
+            # demonstrations start. Inference is skipped entirely, so the first
+            # real observation is taken from the right arm AND the right jaws.
+            arm_targets, gripper_targets = self._ready_targets(body_q, prompt)
+        elif blocked and self.policy.needs_images:
             # A camera the checkpoint needs has never arrived. Hold the measured
             # pose and keep saying why: a server that dies here takes the
             # control loop with it, and a policy fed a black frame is worse than
@@ -321,7 +333,11 @@ class Policy:
         self._blocked_logged_at = 0.0
         self._gate_failures = 0
         self._prompts_warned.clear()
-        print("[server] reset")
+        self._ready_phase = "hands" if self.args.ready_move else "done"
+        self._ready_since = None
+        self._ready_started_at = None
+        print("[server] reset ({})".format(
+            "ready move armed" if self.args.ready_move else "no ready move"))
         return {"ok": True}
 
     # -- helpers ------------------------------------------------------------
@@ -372,6 +388,106 @@ class Policy:
             source = "training-set start for {!r}".format(prompt)
         print("[server] gripper state seeded to (left {:.2f}, right {:.2f}) rad "
               "from {}".format(self._gripper_q[0], self._gripper_q[1], source))
+
+    def _ready_targets(self, body_q: np.ndarray, prompt: str):
+        """Ramp the upper body to this task's recorded start pose.
+
+        Hands first, then arms -- borrowed from the team's own Thor deployment
+        for a reason worth keeping: a jaw that is holding something should drop
+        it from where the arms are now, not from wherever the ready pose puts
+        them.
+
+        The ramp is slow on purpose. We publish end-effector poses and the
+        ORGANIZER'S adapter decides the joint velocity that realises them, and
+        their interpolator is what produced the -7.15 and -8.99 rad/s
+        shutdowns on 2026-09-03. At the default 0.35 rad/s the chunk asks for
+        0.012 rad per model row, seventeen times inside our own
+        MAX_ARM_STEP_RAD gate, so these chunks take exactly the same
+        validation, FK and encoding path a real inference does.
+        """
+        rows = self.execute_rows
+        measured = np.concatenate((body_q[15:22], body_q[22:29]))
+        target = self._ready_arm_q(prompt)
+        grip_target = reset_gripper_rad(prompt)
+        now = time.time()
+        if self._ready_started_at is None:
+            self._ready_started_at = now
+
+        if self._ready_phase == "hands":
+            # Hold the arms still and command the jaws. We cannot see the jaw,
+            # so there is nothing to converge on -- we wait a fixed dwell for it
+            # to physically travel instead. Without that this phase would be a
+            # single chunk and the arms would start moving while the jaw was
+            # still opening, which is exactly the ordering it exists to prevent.
+            arm = np.tile(measured, (rows, 1))
+            grip = self._ramp(self._gripper_q, grip_target, rows,
+                              self.args.ready_gripper_velocity_rad_s)
+            if now - self._ready_started_at >= self.args.ready_hand_dwell_s:
+                self._gripper_q = grip_target.copy()
+                print("[server] ready: jaws commanded to (left {:.2f}, right "
+                      "{:.2f}) rad and given {:.1f}s to travel; moving the arms"
+                      .format(grip_target[0], grip_target[1],
+                              self.args.ready_hand_dwell_s))
+                self._ready_phase = "arms"
+                self._ready_started_at = now      # the arm timeout starts here
+            return arm, grip
+
+        arm = self._ramp(measured, target, rows, self.args.ready_velocity_rad_s)
+        grip = np.tile(grip_target, (rows, 1))
+        error = float(np.max(np.abs(measured - target)))
+
+        if error <= self.args.ready_tolerance_rad:
+            if self._ready_since is None:
+                self._ready_since = now
+            elif now - self._ready_since >= self.args.ready_stable_s:
+                print("[server] READY: arms within {:.3f} rad of the {!r} start "
+                      "pose, held {:.1f}s. Policy starts now.".format(
+                          error, prompt, self.args.ready_stable_s))
+                self._ready_phase = "done"
+        else:
+            self._ready_since = None
+            if now - self._ready_started_at > self.args.ready_timeout_s:
+                # Proceeding beats refusing to start: an attempt that never
+                # begins scores zero for certain. Say so loudly -- the arm is
+                # out of distribution and every number from this run inherits
+                # that. The likeliest cause is the organizer's IK choosing a
+                # different elbow, which a 6-DoF pose cannot pin on a 7-DoF arm.
+                print(
+                    "[server] READY MOVE TIMED OUT after {:.0f}s at {:.3f} rad "
+                    "(tolerance {:.3f}). Starting the policy anyway on an arm "
+                    "that is NOT at the demonstration start pose.".format(
+                        self.args.ready_timeout_s, error,
+                        self.args.ready_tolerance_rad),
+                    file=sys.stderr,
+                )
+                self._ready_phase = "done"
+        return arm, grip
+
+    def _ready_arm_q(self, prompt: str) -> np.ndarray:
+        """The recorded start pose for ``prompt``. Never a shared default."""
+        try:
+            return np.asarray(READY_ARM_Q_BY_TASK[prompt], dtype=np.float64)
+        except KeyError:
+            raise SystemExit(
+                "[server] no recorded start pose for prompt {!r}; known: {}. "
+                "Another subtask's pose does not transfer -- start with "
+                "--no-ready-move to run without one.".format(
+                    prompt, sorted(READY_ARM_Q_BY_TASK)
+                )
+            )
+
+    @staticmethod
+    def _ramp(start, target, rows: int, velocity_rad_s: float) -> np.ndarray:
+        """``rows`` model rows marching from ``start`` toward ``target``."""
+        start = np.asarray(start, dtype=np.float64).reshape(-1)
+        target = np.asarray(target, dtype=np.float64).reshape(-1)
+        delta = target - start
+        distance = float(np.max(np.abs(delta)))
+        if distance < 1e-9:
+            return np.tile(target, (rows, 1))
+        step = velocity_rad_s / 30.0          # per model row, at the model rate
+        fractions = np.minimum(step * np.arange(1, rows + 1) / distance, 1.0)
+        return start + fractions[:, None] * delta
 
     def _hold_still_targets(self, body_q: np.ndarray):
         arm = np.concatenate((body_q[15:22], body_q[22:29]))
@@ -503,6 +619,38 @@ def build_parser() -> argparse.ArgumentParser:
                               "start -- which one scalar cannot express, since two of "
                               "the three subtasks begin with the leg already held.")
 
+    ready = parser.add_argument_group("ready move")
+    ready.add_argument("--ready-move", dest="ready_move", action="store_true",
+                       default=True,
+                       help="Before the policy runs, ramp the upper body to the "
+                            "recorded start pose for the active prompt. The 2026-09-03 "
+                            "dry run sat ~1.0 rad away from it for 11.4 minutes.")
+    ready.add_argument("--no-ready-move", dest="ready_move", action="store_false",
+                       help="Hand the arms straight to the policy, wherever they are.")
+    ready.add_argument("--ready-velocity-rad-s", type=float, default=0.35,
+                       help="Arm ramp speed. WE DO NOT SET THE JOINT VELOCITY -- we "
+                            "publish poses and the organizer's adapter realises them, "
+                            "and their interpolator is what produced the rad/s "
+                            "shutdowns on 2026-09-03. Slow is the whole point.")
+    ready.add_argument("--ready-gripper-velocity-rad-s", type=float, default=2.0,
+                       help="Jaw ramp speed. Faster than the arms: a jaw carries no "
+                            "reach and the move is bounded by the 9 cm stroke.")
+    ready.add_argument("--ready-hand-dwell-s", type=float, default=1.0,
+                       help="How long to command the ready jaw position before the "
+                            "arms move. No jaw position reaches us, so there is "
+                            "nothing to converge on -- this is the travel time we "
+                            "allow it. Jaws move first so a hand that is holding "
+                            "something drops it from where the arms are now.")
+    ready.add_argument("--ready-tolerance-rad", type=float, default=0.10,
+                       help="Joint error that counts as arrived. Looser than a "
+                            "direct-drive move would need, because the organizer's "
+                            "IK picks the elbow swivel a 6-DoF pose cannot pin.")
+    ready.add_argument("--ready-stable-s", type=float, default=0.30,
+                       help="How long the error must hold before the policy starts.")
+    ready.add_argument("--ready-timeout-s", type=float, default=15.0,
+                       help="Give up and start the policy anyway, loudly. An attempt "
+                            "that never begins scores zero for certain.")
+
     kin = parser.add_argument_group("kinematics")
     kin.add_argument("--ee-frame", choices=("pelvis", "torso"), default="pelvis",
                      help="Frame of the published end-effector poses. 'pelvis' runs "
@@ -531,9 +679,10 @@ def main():
     meta = policy.metadata
     print(
         "[server] lane={} policy={} chunk={} rows @ {:g} Hz "
-        "(execute {} model rows of {}) ee_frame={}".format(
+        "(execute {} model rows of {}) ee_frame={} ready_move={}".format(
             meta["lane"], meta["policy"], meta["action_chunk_size"], meta["action_row_hz"],
             meta["execute_rows"], meta["model_horizon"], meta["ee_frame"],
+            "on" if meta["ready_move"] else "OFF",
         )
     )
     serve_policy(policy, host=args.host, port=args.port)

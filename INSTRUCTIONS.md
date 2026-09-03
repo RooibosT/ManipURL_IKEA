@@ -213,6 +213,27 @@ ran the checkpoint we certified at onboarding, which is no longer the one we
 ship. Which of your findings carry over depends on that, and one of them
 does not.
 
+**The upper body moves for ~4 seconds before the policy starts.** New since the
+dry run, and you should know it is coming. Our checkpoint's demonstrations begin
+from a recorded arm pose, and the 2026-09-03 run sat about **1.0 rad away from
+it for the whole 11.4 minutes** — 45% of the left arm's samples were outside the
+training envelope entirely. So the server now ramps the arms and jaws there
+first, and only then hands over to GR00T.
+
+What you will see at the start of every attempt: jaws commanded to the task's
+start position, one second of dwell, then a **0.35 rad/s** arm ramp of 0.75-1.32
+rad (13-26 cm of end-effector travel, depending on the subtask), then the policy.
+It converges in about 4 s and gives up at 15 s.
+
+We are flagging it because *we do not set the joint velocity* — we publish poses
+and your adapter realises them, and your interpolator is what produced the
+-7.15 and -8.99 rad/s shutdowns. Our ramp asks for 0.012 rad per model row,
+seventeen times inside our own step gate, and the chunks take the same
+validation path as policy output. But it is a larger displacement than anything
+the dry run published, and your velocity-limit fix has not been exercised on
+one. **If you would rather we not do this on the first re-run, say so and we
+start with `--no-ready-move`** — it is a flag, no rebuild.
+
 **Stereo `ego_view_left`, please.** Our server declares
 `["ego_view_left", "left_wrist", "right_wrist"]`. The checkpoint's head view was
 trained on `cam_0` of the source recording, which is the **left eye** of the

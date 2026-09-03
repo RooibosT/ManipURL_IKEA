@@ -155,6 +155,25 @@ with both hands open (5.35 / 5.34), `insert table leg to table base` with the
 right already holding the leg (5.36 / 2.35), `rotate leg to tighten` with the
 left (0.17 / 5.34). It is now seeded per task from the prompt.
 
+**The policy does not start until the arms are where the demonstrations
+start.** The checkpoint's episodes begin from a recorded arm pose, per subtask,
+and the dry run sat ~1.0 rad away from it for its whole 11.4 minutes — 45% of
+the left arm's samples outside the training envelope. So the server ramps the
+jaws, dwells a second, ramps the arms at 0.35 rad/s, waits for 0.10 rad of joint
+error to hold for 0.3 s, and only then runs inference. About 4 s.
+
+The ramp is slow because *we do not set the joint velocity*: we publish poses,
+the organizer's adapter realises them, and their interpolator is what produced
+the rad/s shutdowns on 2026-09-03. At 0.35 rad/s a chunk asks for 0.012 rad per
+model row — seventeen times inside our own `MAX_ARM_STEP_RAD` gate — and ready
+chunks take the same gate, FK and encoding path a real inference does.
+`--no-ready-move` turns it off. On timeout it starts anyway and says so loudly:
+an attempt that never begins scores zero for certain.
+
+Only the upper body. Legs and waist have no channel in this lane, and the dry
+run was outside the training envelope on both for 100% of the run — that one is
+an ask, not a fix (INSTRUCTIONS.md §5).
+
 **A missing camera means hold still, not crash.** The checkpoint has no
 missing-view mode. A camera that drops after working reuses its last good frame
 with a warning; one that has *never* published makes the server hold the

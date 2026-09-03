@@ -165,6 +165,16 @@ control:
                                   # ~0.0000 residual, at a run where |waist|
                                   # median 0.228 rad put the pelvis and torso
                                   # frames 7.4 cm apart.
+  ready_move: true                # Before the policy runs, the upper body ramps
+                                  # to this subtask's recorded start pose: jaws,
+                                  # 1 s dwell, then arms at 0.35 rad/s (0.75-1.32
+                                  # rad, 13-26 cm of EE travel). ~4 s, 15 s
+                                  # timeout. The 2026-09-03 dry run ran ~1.0 rad
+                                  # away from that pose for 11.4 minutes. Legs
+                                  # and waist are NOT touched -- no channel --
+                                  # and were outside the training envelope for
+                                  # 100% of that run; see INSTRUCTIONS.md 5.
+                                  # Disable with --no-ready-move, no rebuild.
   model_horizon_rows: 40          # 1.33 s of trajectory at 30 Hz
   executed_rows_per_inference: 16 # 0.5 s of trajectory, then replan
   published_row_hz: 50            # model rows resampled in joint space
