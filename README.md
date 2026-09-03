@@ -17,7 +17,7 @@ fixed standing pose, registered under the `new_embodiment` tag:
 |---|---|
 | Checkpoint | `URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40` (public HF, apache-2.0, 12.6 GB fp32 on disk, bf16 at load) |
 | Views | head (left eye) + both wrists, `(480,640,3)` RGB |
-| State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12 |
+| State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12. Convention confirmed against the dataset's own `meta/modality.json`: pelvis reference, waist excluded from FK, 0.05 m offset from `wrist_yaw_joint`, extrinsic-xyz Euler, and a URDF whose sha256 matches ours byte-for-byte |
 | Action | horizon 40 at 30 Hz; arms RELATIVE (restored to absolute by the processor), grippers ABSOLUTE; no waist group |
 | Denoising | 4 steps — every open-loop number for this checkpoint was measured there |
 | Executed | first 16 rows (0.5 s), then replan — sized against the 185 ms measured on our Thor |
@@ -127,26 +127,33 @@ hand slots as `(7,)`, the Dex3 shape, rejecting anything else, so a 1-DoF jaw
 position has no schema-valid way through. Our 46-dim state has two gripper dims,
 fed from our own last command.
 
-Command and measurement agree while the gripper moves freely and diverge the
-moment it closes on something: the jaw stops at the object, our command does
-not, and the policy — trained on the measured position — reads "closed" while
-the hardware is holding a table leg. We have asked the organizer whether the
-value can reach us in any form (INSTRUCTIONS.md, open question 5).
+We checked what that substitution costs against the training set
+(`URL-RFM/IKEA_pickuptheleg`, 322 episodes / 149,437 frames), and it is far
+less than an earlier version of this file claimed. We said the loop breaks the
+moment the jaw closes on something — the jaw stalls at the object while our
+command keeps going. **The data contains no such regime.** The teleoperator
+commanded the grip *width* instead of slamming to zero: on `insert table leg to
+table base` the right-hand command sits at ~2.17 rad and the jaw at ~2.35, the
+leg's width, and never goes below 1.0 rad on that task at all.
 
-The dry run showed what that costs. Feeding our own command back closes a loop
-with no external input, and it sits at a fixed point: over 34,306 published rows
-the gripper state we handed the policy was constant at 4.46 rad ±0.01 and its
-output never left 4.27-4.50 rad — 0.23 rad of travel in a 5.4 rad stroke, never
-commanding a close. Only vision can break that fixed point, and vision never
-advanced, because IK accept was 15-20% and the arm never reached the leg. So the
-measurement is unambiguous and its cause is not yet separable from the tool-frame
-bug above. Re-measuring on the current checkpoint is the next step, not a
-gripper heuristic.
+What it actually costs, over 148,793 same-episode frame pairs at the best lag
+(1 frame, correlation 0.9998): `|measured − command|` is 0.170 rad median on the
+left hand and 0.060 on the right, worst case 0.30 of a 5.40 rad stroke. And it
+is systematic, not random — the jaw cannot quite reach either end stop, so
+measured is an affine function of command. Fitting that per hand takes the left
+hand's median error to **0.008 rad**. That fit is now applied every step.
 
-One thing was ours and is fixed: we seeded the first inference of every attempt
-with 5.40 rad, the mechanical end stop, when the policy's own observed open is
-4.46 — the constant anchoring the command scale and the constant seeding the
-state were the same number. They are now separate.
+The training rig's calibration is the right one to use even though we deploy on
+a different robot: we are not reproducing the competition jaw's true position,
+we are reproducing the number the checkpoint was trained to read.
+
+Two things the same analysis settled. The command scale endpoints are exactly
+right — the training action channels span `[0.0000, 5.4000]`, so 0 closed and
+5.40 open are the correct denominators. And the reset seed cannot be one
+number: each subtask starts from a different grasp state, `pick table leg`
+with both hands open (5.35 / 5.34), `insert table leg to table base` with the
+right already holding the leg (5.36 / 2.35), `rotate leg to tighten` with the
+left (0.17 / 5.34). It is now seeded per task from the prompt.
 
 **A missing camera means hold still, not crash.** The checkpoint has no
 missing-view mode. A camera that drops after working reuses its last good frame

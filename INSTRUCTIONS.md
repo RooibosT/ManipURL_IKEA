@@ -296,63 +296,66 @@ and all of them are flags, so an answer costs no rebuild.
    template client uses `DECOUPLED_CHUNK_HZ = 20` as the row rate for staleness,
    which is where the ambiguity comes from.)
 
-5. **Can the Dex1-1 gripper position reach us at all?** As shipped it cannot,
-   and we think that is a gap rather than a decision. `boundary/states.py`
-   declares the optional hand slots as `(7,)` — the Dex3 shape — and
-   `_as_vector` rejects anything else outright, so a 1-DoF Dex1-1 jaw position
-   has no schema-valid way onto `:5557`. The README's advice ("synthesize
-   whatever your model expects") is what we do: our two gripper state dims are
-   fed from our own last command.
+5. **Can the Dex1-1 gripper position reach us at all?** Still no, and we still
+   think that is a gap rather than a decision — but **we have measured what it
+   costs and it is much smaller than we told you.** Correcting our own claim
+   first, then the remaining ask.
 
-   That is fine right up to the moment it matters. Our checkpoint was trained
-   on the *measured* jaw position, and command and measurement agree only while
-   the gripper is moving freely. The instant it closes on a table leg the jaw
-   stops at the object and our command keeps going, so the policy sees "closed"
-   while the hardware is holding something — exactly the state it needs to read
-   correctly to decide whether a grasp succeeded.
+   As shipped it cannot reach us. `boundary/states.py` declares the optional
+   hand slots as `(7,)` — the Dex3 shape — and `_as_vector` rejects anything
+   else outright, so a 1-DoF Dex1-1 jaw position has no schema-valid way onto
+   `:5557`. The README's advice ("synthesize whatever your model expects") is
+   what we do.
 
-   If you can publish it we will use it, in whatever form is least disruptive:
-   the real value repeated across the 7-wide vector, a new key, anything. If
-   you would rather not touch the boundary, tell us and we will stop asking; we
-   just would rather you knew that no team on a Dex1-1 rig can close that loop
-   today.
+   **What we previously claimed, and withdraw.** We told you the loop breaks
+   the moment the jaw closes on something: the jaw stalls at the object, our
+   command keeps going, and the policy reads "closed" while holding a leg. We
+   have now checked that against our own training set
+   (`URL-RFM/IKEA_pickuptheleg`, 322 episodes / 149,437 frames) and **there is
+   no such regime in the data.** The teleoperator commanded the grip *width*
+   rather than slamming to zero against the object — on `insert table leg to
+   table base` the right-hand command sits at ~2.17 rad and the jaw at ~2.35,
+   the leg's width. The command never goes below 1.0 rad on that task at all.
+   So the stall we warned you about is not something the demonstrations
+   contain, and a policy trained on them commands widths too.
 
-   **The dry run gave this question data, and it is worth reading before the
-   next session.** Your Finding 4 is real as a measurement — we reproduce your
-   numbers exactly off `log.jsonl` — but the mechanism is this open question,
-   not a stuck output:
+   **What it actually costs.** Over 148,793 same-episode frame pairs, at the
+   best lag (1 frame, correlation 0.9998):
 
-   Because no jaw position is on the wire, we feed the model **our own last
-   command** as its gripper state. That closes a loop with no external input in
-   it. Over 34,306 published rows the gripper state we handed the policy was
-   constant at **4.46 rad ±0.01**, and its output was correspondingly constant
-   (left 4.271-4.500 rad, right 4.408-4.500 rad; **0.23 rad of travel in a
-   5.4 rad stroke**, no trend across six windows of the run). A fixed point with
-   only one way out: vision.
+   | | median | q99 | max |
+   |---|---:|---:|---:|
+   | `\|measured - command\|`, left | 0.170 | 0.180 | 0.242 |
+   | `\|measured - command\|`, right | 0.060 | 0.181 | 0.302 |
 
-   Which is the part we would ask you to weigh before attributing this to the
-   policy. Vision never advanced — IK accept was 15-20% (Finding 1), so the arm
-   held its last valid pose ~80% of the time and never reached the leg. **A pick
-   policy that has not reached the object should not close its gripper**; that is
-   correct behaviour, not a defect. This is the same confound you accepted for
-   Finding 5, and it applies to Finding 4 for the same reason and in the same
-   run: the gripper is conditioned on the same scene that never changed. We do
-   not think Finding 4 can be separated from Finding 1 on this data either.
+   Worst case 0.30 rad of a 5.40 rad stroke — about 6%. And the residual is
+   systematic rather than random: the jaw cannot quite reach either end stop,
+   so measured is an affine function of command. Fitting that per hand
+   (`measured ≈ 0.9602·cmd + 0.1770` left, `0.9322·cmd + 0.3122` right) takes
+   the left hand's median error from **0.170 rad to 0.008**. That is now in
+   `components/policy/taskspace.py` and applied every step.
 
-   Two things we did anyway, so the next run starts cleaner:
+   So: **this is a ~0.01 rad problem, not the loop-breaker we described.** We
+   are sorry for the overstatement — it was reasoning from the mechanism
+   without checking the data. If you were considering a boundary change on our
+   account, this is no longer worth one.
 
-   * **Our reset seed was wrong and is fixed.** We were seeding the first
-     inference of every attempt with 5.40 rad, the mechanical end stop, when the
-     policy's own observed "open" is 4.46 — a 0.93 rad excursion outside its
-     range on the one inference that decides an attempt's opening move. The
-     constant that anchors the command scale and the constant that seeds the
-     state were the same number in our code; they are now separate
-     (`GRIPPER_RESET_RAD`), defaulted from your log.
-   * **We will re-measure the gripper channel on the current checkpoint.** See
-     §9 — the build you ran is not the build we now ship, and Finding 4's
-     numbers belong to the old one.
+   The ask that remains is smaller and you may reasonably decline it: the
+   affine fit above is the *training* rig's jaw calibration, and we deploy on
+   yours. If the two jaws are calibrated differently our synthesized state
+   drifts by the difference — bounded by roughly 0.2 rad, but unmeasurable from
+   where we sit. A single number would settle it: **the measured jaw position at
+   any one known command**, sent however you like, even in an email. No
+   boundary change, no new key, no per-step stream.
 
-   None of that closes the loop. Only a measured jaw position does.
+   One thing the same analysis fixed on our side, worth flagging because it
+   was ours: we were seeding the first inference of every attempt with one
+   scalar for both hands. The training set says each subtask starts from a
+   different grasp state — `pick table leg` opens both (5.35 / 5.34),
+   `insert table leg to table base` starts with the right hand already holding
+   the leg (5.36 / 2.35), and `rotate leg to tighten` with the left
+   (0.17 / 5.34). Seeding "both open" for the third told the policy a closed
+   hand was open, wrong by the entire stroke, on the inference that decides an
+   attempt's opening move. Now seeded per task from the prompt.
 
 Two smaller ones we resolved by following the template's own reference: that
 `base_height_cmd = 0` and `torso_rpy = 0` mean *neutral / hold* rather than an

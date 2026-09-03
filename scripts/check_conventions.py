@@ -12,6 +12,10 @@
 2. THE PUBLISHED CHUNK FITS THE CONTRACT AT EVERY --execute-rows. Resampling
    30 Hz rows to 50 Hz multiplies them by 5/3, so 39+ model rows overflow the
    64-row limit and the client dies on its first publish.
+
+3. THE GRIPPER STATE WE SYNTHESIZE STAYS INSIDE THE TRAINING DISTRIBUTION. No
+   jaw position is on the wire, so we manufacture that model input; the numbers
+   below are pinned to what URL-RFM/IKEA_pickuptheleg actually contains.
 """
 
 from __future__ import annotations
@@ -30,7 +34,19 @@ from components.policy.kinematics import (  # noqa: E402
     TRAINING_EE_OFFSET_M,
     G1WristKinematics,
 )
-from components.policy.taskspace import TaskSpaceEncoder  # noqa: E402
+from components.policy.taskspace import (  # noqa: E402
+    GRIPPER_CLOSED_RAD,
+    GRIPPER_OPEN_RAD,
+    GRIPPER_RESET_RAD_BY_TASK,
+    TaskSpaceEncoder,
+    command_to_measured_rad,
+    gripper_rad_to_command,
+    reset_gripper_rad,
+)
+
+# Measured off URL-RFM/IKEA_pickuptheleg, 322 episodes / 149,437 frames.
+TRAIN_STATE_MIN, TRAIN_STATE_MAX = -0.0255, 5.3921
+TRAIN_ACTION_MIN, TRAIN_ACTION_MAX = 0.0, 5.4000
 
 BODY_Q = 0.15 * np.sin(np.arange(29) * 0.2)
 BASE_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
@@ -79,6 +95,36 @@ def main() -> int:
         DecoupledSink.validate_chunk(chunk)          # raises if over the limit
     print("  --execute-rows 1..40 all fit the {}-row contract       OK".format(
         MAX_CHUNK_LENGTH))
+
+    # 3. the gripper state we manufacture must land inside the training range
+    assert (GRIPPER_CLOSED_RAD, GRIPPER_OPEN_RAD) == (TRAIN_ACTION_MIN, TRAIN_ACTION_MAX), (
+        "command scale endpoints {} do not match the training action range {}".format(
+            (GRIPPER_CLOSED_RAD, GRIPPER_OPEN_RAD), (TRAIN_ACTION_MIN, TRAIN_ACTION_MAX))
+    )
+    for cmd in (GRIPPER_CLOSED_RAD, 2.35, GRIPPER_OPEN_RAD):
+        m = command_to_measured_rad(np.full(2, cmd))
+        assert TRAIN_STATE_MIN <= m.min() and m.max() <= TRAIN_STATE_MAX, (
+            "command {} maps to measured {}, outside the training state range "
+            "[{}, {}]".format(cmd, m, TRAIN_STATE_MIN, TRAIN_STATE_MAX)
+        )
+    print("  synthesized gripper state stays in the training range  OK")
+
+    for prompt in GRIPPER_RESET_RAD_BY_TASK:
+        seed = reset_gripper_rad(prompt)
+        assert TRAIN_STATE_MIN <= seed.min() and seed.max() <= TRAIN_STATE_MAX, \
+            "reset seed for {!r} is {}, outside the training range".format(prompt, seed)
+    # the three tasks do NOT share a seed -- if they ever do, the table is broken
+    seeds = {tuple(np.round(reset_gripper_rad(p), 3)) for p in GRIPPER_RESET_RAD_BY_TASK}
+    assert len(seeds) == len(GRIPPER_RESET_RAD_BY_TASK), (
+        "the per-task reset seeds collapsed to {} distinct values -- each subtask "
+        "starts from a different grasp state".format(len(seeds))
+    )
+    print("  per-task reset seeds are distinct and in range      OK")
+
+    # the boundary mapping must still put the endpoints at exactly -1 / +1
+    assert abs(float(gripper_rad_to_command(np.array([GRIPPER_OPEN_RAD]))[0]) + 1.0) < 1e-9
+    assert abs(float(gripper_rad_to_command(np.array([GRIPPER_CLOSED_RAD]))[0]) - 1.0) < 1e-9
+    print("  open/closed map to boundary -1 / +1 exactly         OK")
 
     print("\nALL CONVENTION CHECKS PASSED")
     return 0

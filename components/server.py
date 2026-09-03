@@ -59,9 +59,10 @@ from components.policy.kinematics import (  # noqa: E402
     G1WristKinematics,
 )
 from components.policy.taskspace import (  # noqa: E402
-    GRIPPER_RESET_RAD,
     JointChunkError,
     TaskSpaceEncoder,
+    command_to_measured_rad,
+    reset_gripper_rad,
     validate_joint_chunk,
 )
 from components.transport import serve_policy  # noqa: E402
@@ -120,8 +121,11 @@ class Policy:
             "right_wrist": "right_wrist",
         }
         # The Dex1-1 rig publishes no hand state, so the gripper dims of the
-        # 46-dim state are fed from our own last command.
-        self._gripper_q = np.full(2, float(args.initial_gripper_rad))
+        # 46-dim state are fed from our own last command, run through the
+        # training rig's command->measured calibration. None until the first
+        # observation: the seed is per-task and the prompt arrives with the
+        # observation, not at reset.
+        self._gripper_q: Optional[np.ndarray] = None
         # Newest good frame per camera key: the organizer's server drops a
         # wrist key when that camera fails, and the checkpoint needs all three.
         self._last_images: Dict[str, np.ndarray] = {}
@@ -260,6 +264,7 @@ class Policy:
         base_quat = np.asarray(obs["base_quat"], dtype=np.float64)
         prompt = obs.get("prompt", "")
         self._check_prompt(prompt)
+        self._seed_gripper(prompt)
         images, blocked = self._collect_images(self._images_from(obs))
 
         if blocked and self.policy.needs_images:
@@ -297,15 +302,20 @@ class Policy:
         actions = self.encoder.encode(
             arm_targets, gripper_targets, waist_q=body_q[12:15]
         )
-        # By the next observation the gripper should be tracking the last row
-        # we published, and that is the best estimate of its state we have.
-        self._gripper_q = np.asarray(gripper_targets[-1], dtype=np.float64).reshape(2)
+        # By the next observation the jaw should be tracking the last row we
+        # published. The model reads the MEASURED position, which on the
+        # training rig is an affine function of the command rather than a copy
+        # of it, so go through that calibration rather than feeding the command
+        # back raw -- it cuts the left hand's error from 0.170 to 0.008 rad.
+        self._gripper_q = command_to_measured_rad(
+            np.asarray(gripper_targets[-1], dtype=np.float64).reshape(2)
+        )
         return {"actions": actions}
 
     def reset(self) -> dict:
         """Called once at the start of every attempt. Drop episode state."""
         self.policy.reset()
-        self._gripper_q = np.full(2, float(self.args.initial_gripper_rad))
+        self._gripper_q = None          # re-seeded from the next prompt
         self._last_images.clear()
         self._degraded_since = None
         self._blocked_logged_at = 0.0
@@ -343,6 +353,25 @@ class Policy:
             ),
             file=sys.stderr,
         )
+
+    def _seed_gripper(self, prompt: str) -> None:
+        """Assume a jaw position for the first inference of an attempt.
+
+        Each of the three subtasks starts from a different grasp state -- two of
+        them begin with the leg already held -- so this is per-task and per-hand
+        and cannot be one number. `--initial-gripper-rad` overrides both hands
+        when you want to pin it by hand.
+        """
+        if self._gripper_q is not None:
+            return
+        if self.args.initial_gripper_rad is not None:
+            self._gripper_q = np.full(2, float(self.args.initial_gripper_rad))
+            source = "--initial-gripper-rad"
+        else:
+            self._gripper_q = reset_gripper_rad(prompt)
+            source = "training-set start for {!r}".format(prompt)
+        print("[server] gripper state seeded to (left {:.2f}, right {:.2f}) rad "
+              "from {}".format(self._gripper_q[0], self._gripper_q[1], source))
 
     def _hold_still_targets(self, body_q: np.ndarray):
         arm = np.concatenate((body_q[15:22], body_q[22:29]))
@@ -464,14 +493,15 @@ def build_parser() -> argparse.ArgumentParser:
                          default=os.environ.get("PEVAL_HEAD_CAMERA", "ego_view_left"),
                          help="Boundary key for the head view. The checkpoint was "
                               "trained on the LEFT eye.")
-    control.add_argument("--initial-gripper-rad", type=float, default=GRIPPER_RESET_RAD,
-                         help="Assumed gripper position at reset, in Dex1-1 motor "
-                              "radians (0 closed, 5.40 fully open). No hand state is "
-                              "published for a Dex1-1 rig, so this seeds the first "
-                              "inference and our own last command feeds every one "
-                              "after it. Default is the policy's own observed 'open' "
-                              "value from the 2026-09-03 dry run, not the mechanical "
-                              "end stop.")
+    control.add_argument("--initial-gripper-rad", type=float, default=None,
+                         help="Override the assumed jaw position at reset for BOTH "
+                              "hands, in Dex1-1 motor radians (0 closed, 5.40 open). "
+                              "No hand state is published for a Dex1-1 rig, so this "
+                              "seeds the first inference and our own last command "
+                              "feeds every one after it. Left unset, the seed comes "
+                              "from the training set's per-task, per-hand episode "
+                              "start -- which one scalar cannot express, since two of "
+                              "the three subtasks begin with the leg already held.")
 
     kin = parser.add_argument_group("kinematics")
     kin.add_argument("--ee-frame", choices=("pelvis", "torso"), default="pelvis",
