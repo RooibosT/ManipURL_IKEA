@@ -10,8 +10,9 @@
    and the policy just gets worse.
 
 2. THE PUBLISHED CHUNK FITS THE CONTRACT AT EVERY --execute-rows. Resampling
-   30 Hz rows to 50 Hz multiplies them by 5/3, so 39+ model rows overflow the
-   64-row limit and the client dies on its first publish.
+   30 Hz rows to 50 Hz multiplies them by 5/3, so 40 model rows overflow the
+   64-row limit (39 fits at exactly 64) and the client dies on its first
+   publish. Zero and negatives are checked too: both used to survive.
 
 3. THE GRIPPER STATE WE SYNTHESIZE STAYS INSIDE THE TRAINING DISTRIBUTION. No
    jaw position is on the wire, so we manufacture that model input; the numbers

@@ -8,8 +8,11 @@ silent:
     not recorded, so deployment has to recompute them identically or those 15
     inputs are noise -- ``state_dropout`` makes the policy robust to a missing
     state, not to a wrong one. Convention, which must not drift:
-    ``g1_body29_hand14.urdf``, **waist held at zero** so the pose is in the
-    torso frame, the ``wrist_yaw`` link origin translated
+    ``g1_body29_hand14.urdf``, **waist held at zero** -- which is a
+    pelvis-origin pose with the waist locked, NOT a torso_link-origin pose;
+    torso_link sits a further 4.42 cm away at (-0.004, 0, 0.044) and the two
+    have been confused in prose before -- the ``wrist_yaw`` link origin
+    translated
     ``TRAINING_EE_OFFSET_M`` along its local +x, orientation as extrinsic-xyz
     Euler (URDF/ROS RPY).
 
@@ -268,9 +271,11 @@ class G1WristKinematics:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Return (position (3,), rotation (3, 3)) of the end-effector point.
 
-        ``waist_q`` None means the waist is held at zero, i.e. the torso frame
-        the training pipeline used. Pass the measured waist to get the true
-        pelvis-frame pose, which is what an IK target wants.
+        ``waist_q`` None locks the waist at zero, which is the convention the
+        training pipeline used. Both branches are pelvis-origin: zeroing the
+        waist does not move the origin to ``torso_link``, which is a further
+        4.42 cm out. Pass the measured waist for where the wrist actually is,
+        which is what an IK target wants.
         """
         try:
             chain = _CHAIN[side]

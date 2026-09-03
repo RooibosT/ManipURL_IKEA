@@ -165,9 +165,10 @@ control:
                                   # ~0.0000 residual, at a run where |waist|
                                   # median 0.228 rad put the pelvis and torso
                                   # frames 7.4 cm apart.
-  ready_move: true                # Before the policy runs, the upper body ramps
-                                  # to this subtask's recorded start pose: jaws,
-                                  # 1 s dwell, then arms at 0.35 rad/s (0.75-1.32
+  ready_move: true                # Before the policy runs, the upper body moves
+                                  # to this subtask's recorded start pose: jaws
+                                  # stepped, 1 s dwell, then arms ramped at
+                                  # 0.35 rad/s (0.75-1.32
                                   # rad, 13-26 cm of EE travel). ~4 s, 15 s
                                   # timeout. The 2026-09-03 dry run ran ~1.0 rad
                                   # away from that pose for 11.4 minutes. Legs

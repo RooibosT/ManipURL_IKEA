@@ -262,8 +262,9 @@ class TaskSpaceEncoder:
         self.output_row_hz = float(output_row_hz)
         # True  -> FK with the measured waist: the wrist's true pelvis-frame
         #          pose, which is what an IK target should be.
-        # False -> waist held at zero, i.e. the torso frame the checkpoint's
-        #          own state block uses.
+        # False -> waist locked at zero, the convention the checkpoint's own
+        #          state block uses. Still pelvis-origin: torso_link is a
+        #          further 4.42 cm out, so this is not "the torso frame".
         # The organizer has not documented which frame the decoupled adapter
         # expects; see INSTRUCTIONS.md, "Open questions".
         self.use_measured_waist = bool(use_measured_waist)

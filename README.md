@@ -203,8 +203,8 @@ checkpoint, and it prints the peak GPU figure `manifest.yaml` wants.
 nothing else can see, because both produce chunks that pass every contract
 check and merely make the robot worse: the model's state offset drifting with
 the wire offset, and an `--execute-rows` value whose resampled chunk overflows
-the contract's 64-row limit (39+ model rows at 30→50 Hz, which the server now
-clamps rather than discovering on the bench).
+the contract's 64-row limit (40 model rows at 30→50 Hz resample to 66; 39
+fits at exactly 64 -- the server clamps rather than discovering it on the bench).
 
 ## Rehearsing on our own Thor and Orin
 

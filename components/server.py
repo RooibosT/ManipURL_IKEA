@@ -60,15 +60,23 @@ from components.policy.kinematics import (  # noqa: E402
     G1WristKinematics,
 )
 from components.policy.taskspace import (  # noqa: E402
+    MAX_ARM_STEP_RAD,
     JointChunkError,
     TaskSpaceEncoder,
+    GRIPPER_RESET_RAD_BY_TASK,
     command_to_measured_rad,
     measured_to_command_rad,
     reset_gripper_rad,
     validate_joint_chunk,
 )
 from components.transport import serve_policy  # noqa: E402
-from boundary.actions import MAX_CHUNK_LENGTH  # noqa: E402  (read-only constant)
+try:  # noqa: E402
+    from boundary.actions import MAX_CHUNK_LENGTH
+except ImportError:                     # boundary/__init__ pulls cv2 and zmq,
+    # and docker/requirements-thor.txt says the server never needs them. Stay
+    # in sync with the contract when they are installed, and keep starting when
+    # they are not -- this is a bound we read, not a wire we speak.
+    MAX_CHUNK_LENGTH = 64
 
 LANE = "decoupled"
 
@@ -134,6 +142,7 @@ class Policy:
         # the prompt arrives with the observation, not at reset.
         self._gripper_q: Optional[np.ndarray] = None
         self._gripper_cmd: Optional[np.ndarray] = None
+        self._seeded_prompt: Optional[str] = None
         # Newest good frame per camera key: the organizer's server drops a
         # wrist key when that camera fails, and the checkpoint needs all three.
         self._last_images: Dict[str, np.ndarray] = {}
@@ -149,13 +158,38 @@ class Policy:
 
         self.policy = self._load_policy()
         self.execute_rows = self._clamp_execute_rows()
+        self._check_ready_velocity()
+
+    def _check_ready_velocity(self) -> None:
+        """A ready ramp that trips our own joint gate would reject every chunk.
+
+        `_ramp`'s per-row step is velocity / model_row_hz, and the gate rejects
+        anything over MAX_ARM_STEP_RAD. Over that, the ready move never
+        converges, the timeout fires 15 s later and the arm never gets there --
+        so fail at startup, the way the chunk length does, rather than on the
+        bench mid-move. Both of these are advertised as no-rebuild knobs.
+        """
+        if not self.args.ready_move:
+            return
+        for name, velocity in (("--ready-velocity-rad-s",
+                                self.args.ready_velocity_rad_s),):
+            step = velocity / self.args.model_row_hz
+            if step > MAX_ARM_STEP_RAD:
+                raise SystemExit(
+                    "[server] {} {:g} is {:.3f} rad per model row at {:g} Hz, over "
+                    "the {:.2f} rad joint gate -- every ready chunk would reject "
+                    "itself. Use at most {:g}.".format(
+                        name, velocity, step, self.args.model_row_hz,
+                        MAX_ARM_STEP_RAD, MAX_ARM_STEP_RAD * self.args.model_row_hz)
+                )
 
     def _clamp_execute_rows(self) -> int:
         """Model rows we execute, capped so the encoded chunk fits the contract.
 
         Resampling 30 Hz model rows up to 50 Hz multiplies them by 5/3, and
         `DecoupledSink` rejects anything longer than MAX_CHUNK_LENGTH rows. At
-        those rates the ceiling is 38 model rows -- so `--execute-rows 40`, the
+        those rates the ceiling is 39 model rows (which resample to exactly 64)
+        -- so `--execute-rows 40`, the
         obvious "execute the whole horizon" value and equal to `--horizon`'s
         own default, would have the client die on its FIRST publish with an
         ActionError, on the bench, with the robot holding its last command.
@@ -286,18 +320,23 @@ class Policy:
         self._seed_gripper(prompt)
         images, blocked = self._collect_images(self._images_from(obs))
 
-        if self._ready_phase != "done":
-            # The policy does not run until the upper body is where the
-            # demonstrations start. Inference is skipped entirely, so the first
-            # real observation is taken from the right arm AND the right jaws.
-            arm_targets, gripper_targets = self._ready_targets(body_q, prompt)
-        elif blocked and self.policy.needs_images:
+        if blocked and self.policy.needs_images:
             # A camera the checkpoint needs has never arrived. Hold the measured
             # pose and keep saying why: a server that dies here takes the
             # control loop with it, and a policy fed a black frame is worse than
             # one that does nothing.
+            #
+            # This is checked BEFORE the ready move, not after. Ramping the arms
+            # 13-26 cm while blind is worse than not ramping, and burying the
+            # one message that names the fix (--head-camera ego_view) under 15 s
+            # of ready move defeats the reason it repeats at all.
             self._report_blocked(blocked)
             arm_targets, gripper_targets = self._hold_still_targets(body_q)
+        elif self._ready_phase != "done":
+            # The policy does not run until the upper body is where the
+            # demonstrations start. Inference is skipped entirely, so the first
+            # real observation is taken from the right arm AND the right jaws.
+            arm_targets, gripper_targets = self._ready_targets(body_q, prompt)
         else:
             arm_targets, gripper_targets = self._infer(
                 images, body_q, base_quat, prompt
@@ -340,6 +379,7 @@ class Policy:
         self.policy.reset()
         self._gripper_q = None          # re-seeded from the next prompt
         self._gripper_cmd = None
+        self._seeded_prompt = None
         self._last_images.clear()
         self._degraded_since = None
         self._blocked_logged_at = 0.0
@@ -394,14 +434,39 @@ class Policy:
         when you want to pin it by hand.
         """
         if self._gripper_q is not None:
-            return
+            # Re-arm in exactly one case: we seeded off a prompt with no
+            # training-set start and a real one has now arrived. One empty or
+            # mistyped prompt on the first observation would otherwise latch
+            # the both-open fallback and the skipped ready move for the whole
+            # attempt -- and on `rotate leg to tighten` that tells the model a
+            # closed hand is open, wrong by the entire 5.2 rad stroke, on the
+            # inference that decides the opening move. Narrow on purpose: an
+            # unknown prompt means nothing meaningful was under way, so there
+            # is no attempt in progress to disturb.
+            if (self._seeded_prompt in GRIPPER_RESET_RAD_BY_TASK
+                    or prompt not in GRIPPER_RESET_RAD_BY_TASK):
+                return
+            print("[server] prompt {!r} -> {!r}: re-seeding off a real "
+                  "training-set start".format(self._seeded_prompt, prompt))
+            self._ready_phase = "hands" if self.args.ready_move else "done"
+            self._ready_since = None
+            self._ready_started_at = None
         self._gripper_q = self._target_gripper_q(prompt)
         self._gripper_cmd = measured_to_command_rad(self._gripper_q)
-        source = ("--initial-gripper-rad"
-                  if self.args.initial_gripper_rad is not None
-                  else "training-set start for {!r}".format(prompt))
+        if self.args.initial_gripper_rad is not None:
+            source = "--initial-gripper-rad"
+        elif prompt in GRIPPER_RESET_RAD_BY_TASK:
+            source = "training-set start for {!r}".format(prompt)
+        else:
+            # reset_gripper_rad falls through to both-open for an unknown key,
+            # and saying "training-set start" there would be a lie about a
+            # value that can be wrong by the whole stroke on a subtask that
+            # begins holding the leg.
+            source = ("the both-open FALLBACK -- {!r} has no training-set start"
+                      .format(prompt))
         print("[server] gripper state seeded to (left {:.2f}, right {:.2f}) rad "
               "from {}".format(self._gripper_q[0], self._gripper_q[1], source))
+        self._seeded_prompt = prompt
 
     def _target_gripper_q(self, prompt: str) -> np.ndarray:
         """The MEASURED jaw position this task starts from, both hands.
@@ -445,7 +510,11 @@ class Policy:
         # The table stores the MEASURED jaw, so aim at the command that
         # produces it and ramp in command space -- what we publish is a command.
         grip_target = measured_to_command_rad(self._target_gripper_q(prompt))
-        now = time.time()
+        # monotonic, not time.time(): a Jetson with no RTC battery sets its
+        # clock from NTP right about when the first attempt starts, and a step
+        # either way decides between an instant bogus timeout and a move that
+        # never ends. components/client.py uses monotonic for the same reason.
+        now = time.monotonic()
         if self._ready_started_at is None:
             self._ready_started_at = now
 
@@ -455,10 +524,12 @@ class Policy:
             # to physically travel instead. Without that this phase would be a
             # single chunk and the arms would start moving while the jaw was
             # still opening, which is exactly the ordering it exists to prevent.
+            # A STEP, not a ramp. Ramping needs a start, and no jaw position
+            # reaches us -- our own estimate is by construction already at the
+            # target, so any ramp from it is the identity. The jaw is commanded
+            # outright and `--ready-hand-dwell-s` is the travel allowance.
             arm = np.tile(measured, (rows, 1))
-            grip = self._ramp(self._gripper_cmd, grip_target, rows,
-                               self.args.ready_gripper_velocity_rad_s,
-                               self.args.model_row_hz)
+            grip = np.tile(grip_target, (rows, 1))
             if now - self._ready_started_at >= self.args.ready_hand_dwell_s:
                 # No assignment here: act() already ends by running the last
                 # published command back through the calibration, which is the
@@ -657,14 +728,18 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Boundary key for the head view. The checkpoint was "
                               "trained on the LEFT eye.")
     control.add_argument("--initial-gripper-rad", type=float, default=None,
-                         help="Override the assumed jaw position at reset for BOTH "
-                              "hands, in Dex1-1 motor radians (0 closed, 5.40 open). "
-                              "No hand state is published for a Dex1-1 rig, so this "
-                              "seeds the first inference and our own last command "
-                              "feeds every one after it. Left unset, the seed comes "
-                              "from the training set's per-task, per-hand episode "
-                              "start -- which one scalar cannot express, since two of "
-                              "the three subtasks begin with the leg already held.")
+                         help="Override the assumed MEASURED jaw at reset, both hands, "
+                              "in Dex1-1 motor radians. THIS MOVES HARDWARE: it is "
+                              "also the ready move's jaw setpoint, so on a subtask "
+                              "that starts holding the leg (`rotate leg to tighten`, "
+                              "left 0.17) passing an open value commands the hand open "
+                              "and drops it. Stay inside the measured range the "
+                              "training set actually contains, [0.177, 5.362] left and "
+                              "[0.312, 5.346] right -- 5.40 is the mechanical end stop "
+                              "and above anything the checkpoint ever saw. Left unset, "
+                              "the seed is the training set's per-task, per-hand "
+                              "episode start, which one scalar cannot express since "
+                              "two of the three subtasks begin with the leg held.")
 
     ready = parser.add_argument_group("ready move")
     ready.add_argument("--ready-move", dest="ready_move", action="store_true",
@@ -679,9 +754,6 @@ def build_parser() -> argparse.ArgumentParser:
                             "publish poses and the organizer's adapter realises them, "
                             "and their interpolator is what produced the rad/s "
                             "shutdowns on 2026-09-03. Slow is the whole point.")
-    ready.add_argument("--ready-gripper-velocity-rad-s", type=float, default=2.0,
-                       help="Jaw ramp speed. Faster than the arms: a jaw carries no "
-                            "reach and the move is bounded by the 9 cm stroke.")
     ready.add_argument("--ready-hand-dwell-s", type=float, default=1.0,
                        help="How long to command the ready jaw position before the "
                             "arms move. No jaw position reaches us, so there is "
@@ -700,9 +772,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     kin = parser.add_argument_group("kinematics")
     kin.add_argument("--ee-frame", choices=("pelvis", "torso"), default="pelvis",
-                     help="Frame of the published end-effector poses. 'pelvis' runs "
-                          "FK with the measured waist; 'torso' zeroes it, matching "
-                          "the checkpoint's own state block. See INSTRUCTIONS.md.")
+                     help="Waist handling for the published poses, NOT two different "
+                          "frames -- both are pelvis-origin. 'pelvis' runs FK with the "
+                          "measured waist, i.e. where the wrist actually is. 'torso' "
+                          "locks the waist at zero, reproducing the checkpoint's own "
+                          "state convention; the name is historical and misleading, "
+                          "since a true torso_link-origin pose is a further 4.42 cm "
+                          "away. See INSTRUCTIONS.md.")
     kin.add_argument("--ee-offset-m", type=float, default=ACTION_EE_OFFSET_M,
                      help="Tool offset of the PUBLISHED pose only, in metres along "
                           "the wrist_yaw link's local +x. 0 targets the bare link "

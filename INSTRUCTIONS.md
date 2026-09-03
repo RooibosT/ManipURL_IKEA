@@ -300,7 +300,9 @@ and all of them are flags, so an answer costs no rebuild.
    observation images as JPEG because we cannot see your link: three 480x640x3
    frames are 2.76 MB raw, which is ~22 ms at gigabit but ~221 ms at 100 Mb/s,
    and at 100 Mb/s that alone would leave 1 of our 26 published rows alive.
-   Measured on our Orin, JPEG costs 7-10 ms to encode and lands at 56 KB, so it
+   JPEG costs 7-10 ms to encode on our Orin. (An earlier draft quoted 56 KB per
+   observation here; that figure came from the mock's synthetic frames and a
+   real scene is 150-250 KB. The conclusion is unchanged -- see README.) So it
    is the faster option at any link speed we can imagine and we are not asking
    you to change anything. `--jpeg-quality 0` sends raw if you ever want to
    compare; it is a client flag, so no rebuild.
@@ -459,11 +461,16 @@ result stands unchanged. What it means per finding:
   the checkpoint's. Fixed, and validated by replaying your `log.jsonl`.
 * **Finding 3 (safety) is unaffected.** Our action space never contained joint
   velocity in either build.
-* **Finding 4 (gripper) — mechanism transfers, numbers do not.** The gripper
-  units, the command mapping and the open-loop state feedback are byte-identical
-  between the two builds, so the fixed point described in §6.5 is still there.
-  But 4.271-4.500 rad is the *old* checkpoint's output. We are re-measuring on
-  the current one and will send the figures before the next session.
+* **Finding 4 (gripper) — the units transfer, the feedback path does NOT, and
+  §6.5 has been rewritten.** The gripper units and the command mapping are
+  identical between the two builds. The open-loop state feedback is not: it was
+  a raw echo of our last command on 2026-09-03 and now runs through a measured
+  calibration, so what you observed is not what will run. And the jaw-stall
+  mechanism we originally offered you in §6.5 has been **withdrawn** — the
+  training set contains no such regime; see that section for what replaced it.
+  4.271-4.500 rad is the *old* checkpoint's output under the *old* feedback
+  path. We are re-measuring on the current one and will send the figures before
+  the next session.
 * **Finding 5 (repetitive motion) is not testable on this data** — and now for
   two reasons rather than one: the IK confound you already identified, plus a
   different policy.
