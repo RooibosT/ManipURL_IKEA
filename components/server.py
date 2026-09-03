@@ -408,6 +408,15 @@ class Policy:
         rows = self.execute_rows
         measured = np.concatenate((body_q[15:22], body_q[22:29]))
         target = self._ready_arm_q(prompt)
+        if target is None:
+            print(
+                "[server] no recorded start pose for prompt {!r} (known: {}); "
+                "SKIPPING the ready move and handing the policy the arms where "
+                "they are.".format(prompt, sorted(READY_ARM_Q_BY_TASK)),
+                file=sys.stderr,
+            )
+            self._ready_phase = "done"
+            return self._hold_still_targets(body_q)
         grip_target = reset_gripper_rad(prompt)
         now = time.time()
         if self._ready_started_at is None:
@@ -463,18 +472,24 @@ class Policy:
                 self._ready_phase = "done"
         return arm, grip
 
-    def _ready_arm_q(self, prompt: str) -> np.ndarray:
-        """The recorded start pose for ``prompt``. Never a shared default."""
-        try:
-            return np.asarray(READY_ARM_Q_BY_TASK[prompt], dtype=np.float64)
-        except KeyError:
-            raise SystemExit(
-                "[server] no recorded start pose for prompt {!r}; known: {}. "
-                "Another subtask's pose does not transfer -- start with "
-                "--no-ready-move to run without one.".format(
-                    prompt, sorted(READY_ARM_Q_BY_TASK)
-                )
-            )
+    def _ready_arm_q(self, prompt: str) -> Optional[np.ndarray]:
+        """The recorded start pose for ``prompt``, or None if we have none.
+
+        Another subtask's pose does not transfer -- borrowing one is worse than
+        not moving, because a wrong recorded pose is indistinguishable from the
+        right one once the arm is already there. So an unknown prompt skips the
+        ready move rather than guessing.
+
+        It does NOT kill the server. This runs on the first observation, with
+        the robot live and the client's control loop depending on the reply --
+        the same reason a missing camera holds the pose instead of raising. The
+        prompt is out of distribution either way and `_check_prompt` has
+        already said so.
+        """
+        pose = READY_ARM_Q_BY_TASK.get(prompt)
+        if pose is None:
+            return None
+        return np.asarray(pose, dtype=np.float64)
 
     @staticmethod
     def _ramp(start, target, rows: int, velocity_rad_s: float) -> np.ndarray:
