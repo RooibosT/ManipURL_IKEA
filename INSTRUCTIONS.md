@@ -12,7 +12,7 @@ carries the same values in machine-readable form.
 | 1 | Repo with an unmodified `boundary/` and a Dockerfile per container | this repo; `docker/Dockerfile.thor`, `docker/Dockerfile.orin`; verify with `scripts/check_boundary.sh` |
 | 2 | Thor image, by digest | `manifest.yaml` → `images.thor.digest` |
 | 3 | Orin image, by digest | `manifest.yaml` → `images.orin.digest` |
-| 4 | Model weights, not baked in | `manifest.yaml` → `weights`; download and access in §0 below |
+| 4 | Model weights, not baked in | `manifest.yaml` → `weights`; download in §0 below — the repo is public, nothing to request |
 | 5 | Manifest | `manifest.yaml` |
 | 6 | Conformance log | `docs/conformance_decoupled_orin.log` (on our Orin, inside the built image); `docs/conformance_decoupled.log` and `..._py38.log` are the same check off-hardware |
 | 7 | Run command per container | §1 and §2 below |
@@ -29,22 +29,20 @@ The checkpoint is **not** baked into the image — mount it.
 # on the Thor, once
 sudo mkdir -p /opt/weights && sudo chown "$USER" /opt/weights
 pip install -U "huggingface_hub[cli]"
-hf auth login                       # your own HF account, once we have added it
-hf download RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40 \
-    --local-dir /opt/weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+hf download URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40 \
+    --local-dir /opt/weights/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40
 ```
 
-<https://huggingface.co/RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40>
+<https://huggingface.co/URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40>
 
 About **12.6 GB** to download (the checkpoint is stored fp32 and cast to
 bfloat16 at load, so it occupies roughly 6 GB on the GPU).
 
-> **The one thing we need from you to make this work:** the repo is private, so
-> send us the Hugging Face username(s) of whoever will pull it and we will add
-> them as readers. Then `hf auth login` with your own token and the command
-> above just works. There is no gate, no license click-through and no request
-> form. We would rather grant per-account access than mail you a shared token,
-> but say the word and we will issue a fine-grained read-only token instead.
+> **Nothing is needed from you for this repo.** It is public, ungated and
+> apache-2.0 — no account, no token, no access request, no license
+> click-through. An earlier version of this file asked you for Hugging Face
+> usernames so we could grant access to a private repo; that ask is withdrawn.
+> The backbone below is a different story.
 
 ### And one more download: the VLM backbone
 
@@ -93,7 +91,7 @@ docker run --rm -it \
     --network host \
     --ipc host \
     -v /opt/weights:/weights:ro \
-    -e PEVAL_CHECKPOINT=/weights/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40 \
+    -e PEVAL_CHECKPOINT=/weights/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40 \
     -e HF_HOME=/weights/hf-cache \
     -e HF_HUB_OFFLINE=1 \
     <thor-image>@<thor-digest> \
@@ -149,21 +147,25 @@ back.
 
 ### The prompt matters
 
-The checkpoint is language-conditioned and was trained on exactly five subtask
+The checkpoint is language-conditioned and was trained on exactly three subtask
 strings:
 
 ```
 pick table leg
-rotate leg to tighten
 insert table leg to table base
-rotate table base
-flip table
+rotate leg to tighten
 ```
 
 Anything else is out of distribution, and the failure is quiet — the policy
 still returns a confident-looking chunk. The server logs a warning once per
 unseen prompt. Restart the client with a different `--prompt` to switch
 subtask; nothing else needs restarting.
+
+**`rotate table base` and `flip table` are not in this model's vocabulary.**
+We train five-task variants too, but carrying those two costs the other three
+about 12% on `insert`, so the checkpoint we are submitting drops them. If the
+run order needs either subtask, tell us and we will swap in the five-task
+checkpoint — same contract, same image, only the mounted directory changes.
 
 There is **no prompt that makes the robot walk.** Locomotion segments were
 excluded from the finetune on purpose, so `navigate_cmd`, `base_height_cmd` and

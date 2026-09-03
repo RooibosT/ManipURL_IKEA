@@ -10,21 +10,35 @@ Declarations: [`manifest.yaml`](manifest.yaml).**
 
 ## What the policy is
 
-GR00T N1.7 finetuned on Dex1 whole-body teleop of an IKEA children's table
-build, registered under the `new_embodiment` tag:
+GR00T N1.7 finetuned on Dex1 teleop of an IKEA children's table build, from a
+fixed standing pose, registered under the `new_embodiment` tag:
 
 | | |
 |---|---|
-| Checkpoint | `RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40` (private HF, 12.6 GB fp32 on disk, bf16 at load) |
+| Checkpoint | `URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40` (public HF, apache-2.0, 12.6 GB fp32 on disk, bf16 at load) |
 | Views | head (left eye) + both wrists, `(480,640,3)` RGB |
 | State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12 |
-| Action | horizon 40 at 30 Hz; arms RELATIVE (restored to absolute by the processor), waist and grippers ABSOLUTE |
+| Action | horizon 40 at 30 Hz; arms RELATIVE (restored to absolute by the processor), grippers ABSOLUTE; no waist group |
 | Denoising | 4 steps — every open-loop number for this checkpoint was measured there |
 | Executed | first 16 rows (0.5 s), then replan — sized against the 185 ms measured on our Thor |
-| Prompts | five subtask strings; see INSTRUCTIONS.md |
+| Prompts | three subtask strings; see INSTRUCTIONS.md |
 
-Arm MAE against held-out teleop, by how deep into the chunk you execute:
-5 rows 1.20°, **8 rows 1.50°**, 16 rows 2.25°, 40 rows 3.98°.
+Open-loop accuracy on the held-out split, over rows 1-8 — the window async
+deployment actually executes once latency compensation has eaten the lead:
+
+| task | n | arm MAE | wrist error |
+|---|---:|---:|---:|
+| pick table leg | 180 | 1.23° | 8.99 mm |
+| insert table leg to table base | 182 | 1.37° | 13.43 mm |
+| rotate leg to tighten | 335 | 1.60° | 12.40 mm |
+| **all** | 697 | **1.45°** | **11.78 mm** |
+
+This is a *three*-task model on purpose: of every 46-dim checkpoint trained
+here, it has the lowest wrist error on `pick table leg`, because it is not
+paying for the two extra tasks the five-task variants carry. Two consequences
+worth stating — `rotate table base` and `flip table` are **not** in its
+vocabulary, and a 46-dim model is 15-20% behind its 60-dim counterpart, which
+we cannot use because arm joint *velocity* is not on the wire.
 
 ## Why `decoupled`
 
@@ -166,14 +180,21 @@ bench rather than assuming.
       (Orin NX, L4T R35.3.1, Python 3.8); also on x86 Python 3.8 and 3.10
 - [x] Full task-space path — FK, quaternion ordering, gripper mapping — checked
       against `boundary`'s own validator
-- [x] Real checkpoint loaded and inferred **on the Thor, in the built image**,
-      through the server's own code path: contract matches, 185 ms per
-      inference, 6.10 GiB peak (`docs/contract_check_thor.log`)
+- [ ] **Re-run pending for the new checkpoint.** Real checkpoint loaded and
+      inferred **on the Thor, in the built image**, through the server's own
+      code path: contract matches, 185 ms per inference, 6.10 GiB peak
+      (`docs/contract_check_thor.log`) — recorded against the previous
+      checkpoint. The architecture is identical, so the latency and memory
+      figures should carry; the contract keys changed (`cam_left_high`, no
+      waist action) and have only been checked against the repo's declared
+      config, not on hardware.
 - [x] Both images build and run on their own silicon; the Thor image's torch
       carries sm_110 kernels
 - [x] Both pushed to `ghcr.io/rooibost/` and their digests written into
       `manifest.yaml`
 - [x] Peak GPU memory measured on the Thor: 6.10 GiB reserved, declared 8 GB
-- [x] Closed loop: the real checkpoint on the Thor driving the Orin client,
-      both from the pushed digest images — 185 ms round trip, 320-340 ms of
-      motion published per cycle (`docs/integration_thor_orin.log`)
+- [ ] **Re-run pending for the new checkpoint.** Closed loop: the real
+      checkpoint on the Thor driving the Orin client, both from the pushed
+      digest images — 185 ms round trip, 320-340 ms of motion published per
+      cycle (`docs/integration_thor_orin.log`), again on the previous
+      checkpoint

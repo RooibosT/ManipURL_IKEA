@@ -63,20 +63,18 @@ images:
 thor_orin_port: 8765
 
 weights:
-  uri: hf://RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
-  url: https://huggingface.co/RooibosT/gr00t-n1.7-g1-dex1-bct-relarm-aug-30hz-h40
+  uri: hf://URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40
+  url: https://huggingface.co/URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40
   # NOT baked into the image. Mounted read-only at /weights; see INSTRUCTIONS.md.
-  visibility: private
+  visibility: public
   gated: false
+  license: apache-2.0
   access: >-
-    ACTION NEEDED FROM YOU: send us the Hugging Face username(s) of whoever will
-    pull the weights and we will add them as readers on the repo. After that it
-    is a normal `hf auth login` with your own token and the `hf download` line
-    in INSTRUCTIONS.md; there is no gate, no license click-through and no form.
-    We are granting per-account access rather than handing over a shared token
-    on purpose -- a grant is revocable and auditable, and it keeps a credential
-    out of the submission documents. If a token suits your workflow better, say
-    so and we will issue a fine-grained read-only one over a separate channel.
+    NOTHING IS NEEDED FROM YOU for this repo. It is public, ungated and
+    apache-2.0: the `hf download` line in INSTRUCTIONS.md works with no
+    account, no token and no access request. (Our previous submission listed a
+    private repo here and asked you for usernames; that ask is withdrawn.) The
+    VLM backbone below is still gated and still needs one click.
   # SECOND GATED DEPENDENCY, and the one that is easy to miss. Every GR00T
   # checkpoint -- ours and the base model alike -- loads its VLM backbone from
   # Hugging Face at model-load time. It is not inside our checkpoint and not
@@ -103,14 +101,19 @@ weights:
   # figure below.
   format: GR00T N1.7 safetensors checkpoint, fp32 on disk, bf16 at load
   verified: >-
-    Repo exists, private, not gated, 17 files, last updated 2026-08-18. Its
-    contents match the checkpoint scripts/contract_check.py was run against.
+    Repo exists, public, ungated, 19 files, 3 fp32 safetensors shards totalling
+    12.58 GB, last updated 2026-09-03. Its declared modality config was read
+    off the repo and matches components/policy/bct.py. NOT YET re-verified on
+    hardware: scripts/contract_check.py and the closed-loop run in docs/ were
+    both recorded against the previous checkpoint, and are being re-run.
   description: >-
-    GR00T N1.7 finetuned on Dex1 whole-body teleop, embodiment tag
-    `new_embodiment`. 3 camera views, 46-dim state, action horizon 40 at 30 Hz,
-    arms predicted RELATIVE and restored to absolute by the processor, waist and
-    grippers ABSOLUTE. Run at 4 denoising steps -- every open-loop number for
-    this checkpoint was measured there.
+    GR00T N1.7 finetuned on Dex1 IKEA table assembly from a fixed standing
+    pose, embodiment tag `new_embodiment`. 3 camera views (cam_left_high,
+    cam_left_wrist, cam_right_wrist), 46-dim state, action horizon 40 at 30 Hz.
+    The action space is arms + grippers only: arms predicted RELATIVE and
+    restored to absolute by the processor, grippers ABSOLUTE, and no waist
+    group at all. Three task prompts, not five. Run at 4 denoising steps --
+    every open-loop number for this checkpoint was measured there.
 
 # Peak GPU memory we expect on the Thor, of its 128 GB unified pool.
 # MEASURED ON THE THOR, in this image: torch.cuda.max_memory_reserved() =
@@ -133,11 +136,11 @@ boundary:
 
 cameras:
   # Declared by the server in its metadata frame; the client filters to exactly
-  # these. The checkpoint's `cam_head` was trained on cam_0 of the source
+  # these. The checkpoint's `cam_left_high` was trained on cam_0 of the source
   # recording, which is the LEFT eye of the head stereo pair -- hence the stereo
   # key rather than the mono one. THIS NEEDS STEREO ENABLED FOR US; see
   # INSTRUCTIONS.md, "What we need from you".
-  ego_view_left: cam_head
+  ego_view_left: cam_left_high
   left_wrist: cam_left_wrist
   right_wrist: cam_right_wrist
   fallback: >-
@@ -177,11 +180,13 @@ control:
   # stale on arrival -- 60 ms of motion per 185 ms cycle, so the controller
   # would hold its last command two thirds of the time. 16 rows become 26, of
   # which 17 survive: 340 ms of motion per cycle, comfortably ahead of the next
-  # inference. The cost is accuracy deeper into the chunk (arm MAE 1.50 deg at
-  # row 8, 2.25 deg at row 16), which is the right trade against a robot that
-  # stutters two thirds of the time.
+  # inference. The cost is accuracy deeper into the chunk, which is the right
+  # trade against a robot that stutters two thirds of the time. For this
+  # checkpoint only the 1-8 row window has been scored (arm MAE 1.45 deg,
+  # wrist 11.8 mm over 697 held-out windows); the 16- and 40-row scan that
+  # justified this number on the previous checkpoint has not been re-run.
   locomotion: >-
     navigate_cmd, base_height_cmd and torso_rpy are published as zeros. The
-    checkpoint predicts no locomotion command, and its `waist` output only
-    imitates the balance controller, so the whole-body controller keeps those
-    degrees of freedom.
+    checkpoint predicts no locomotion command and no waist at all -- the waist
+    is in its state but not in its action space -- so the whole-body controller
+    keeps those degrees of freedom.
