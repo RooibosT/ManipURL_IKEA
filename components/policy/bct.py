@@ -86,6 +86,44 @@ TRAINED_PROMPTS = (
     "rotate leg to tighten",
 )
 
+# --- Recorded start pose, per subtask -------------------------------------
+# The arm joints (14,) an episode of each task begins from, taken from the
+# training set (URL-RFM/IKEA_pickuptheleg): the real recorded start closest in
+# L2 to the per-joint median, over the episodes whose jaws start in that task's
+# typical grip state. Filtering by grip is not cosmetic -- an arm holding a leg
+# sits nowhere near an arm about to reach for one.
+#
+#   task                              eps  kept  worst joint p5-p95
+#   pick table leg                    110   100        0.769 rad
+#   insert table leg to table base    109    99        0.827 rad
+#   rotate leg to tighten             103   100        1.125 rad
+#
+# THIS TABLE BELONGS TO THIS CHECKPOINT AND DOES NOT TRANSFER. The same poses
+# derived from the five-task recording differ from these by up to 0.48 rad, so
+# a pose borrowed from another dataset puts the policy out of distribution at
+# the exact moment it is handed the arms -- and nothing downstream can tell.
+#
+# The spread is wide because the arms are NOT a fixed start: only the stance is
+# (legs std 0.048 rad, waist 0.064; arms 0.33-0.44). Moving here does not put
+# the arm on a precise target, it moves it from outside the distribution to the
+# middle of it -- the 2026-09-03 dry run sat about 1.0 rad away for its whole
+# 11.4 minutes.
+READY_ARM_Q_BY_TASK = {
+    "pick table leg": (
+        -0.158371, +0.008859, +0.023980, +0.200029, -0.041933, +0.031051, -0.061335,
+        +0.027624, -0.000865, -0.071210, +0.018935, +0.124504, +0.122575, +0.067399,
+    ),
+    "insert table leg to table base": (
+        -0.409393, +0.370231, +0.078856, -0.389128, -0.660606, +0.443296, -0.693899,
+        -0.250830, -0.256261, -0.077826, -0.342162, -0.012512, +0.466450, +0.252424,
+    ),
+    "rotate leg to tighten": (
+        -0.957588, +0.360344, -0.444423, +0.654974, +0.127201, +0.114917, -1.245904,
+        +0.053462, -0.418288, -0.269489, -0.276848, +0.379996, +0.262119, +0.508287,
+    ),
+}
+
+
 # Deployment view -> the checkpoint's own video key. cam_left_high is cam_0 of
 # the source recording, which is the LEFT eye of the head stereo pair.
 DEFAULT_VIDEO_KEYS = {

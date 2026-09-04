@@ -17,7 +17,7 @@ fixed standing pose, registered under the `new_embodiment` tag:
 |---|---|
 | Checkpoint | `URL-RFM/gr00t-n1.7-g1-dex1-ikea-3task-46d-30hz-h40` (public HF, apache-2.0, 12.6 GB fp32 on disk, bf16 at load) |
 | Views | head (left eye) + both wrists, `(480,640,3)` RGB |
-| State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12 |
+| State | 46 dims — legs 12, waist 3, arms 14, grippers 2, projected gravity 3, FK wrist poses 12. Convention confirmed against the dataset's own `meta/modality.json`: pelvis reference, waist excluded from FK, 0.05 m offset from `wrist_yaw_joint`, extrinsic-xyz Euler, and a URDF whose sha256 matches ours byte-for-byte |
 | Action | horizon 40 at 30 Hz; arms RELATIVE (restored to absolute by the processor), grippers ABSOLUTE; no waist group |
 | Denoising | 4 steps — every open-loop number for this checkpoint was measured there |
 | Executed | first 16 rows (0.5 s), then replan — sized against the 185 ms measured on our Thor |
@@ -51,10 +51,17 @@ channel, so the server runs **forward kinematics** on the predicted arm joints
 and publishes wrist poses, and the organizer's adapter runs inverse kinematics
 to get back to joints. The G1 arm is 7-DoF and a pose is 6-DoF, so the elbow
 swivel is not determined by what we send — their IK picks it. Nothing in the
-contract can flag a disagreement; it shows up as an oddly-posed elbow. We are
-measuring that round-trip offline against a stand-in IK, and an EE-space variant
-of the checkpoint (whose action space *is* the lane's) is the fallback if the
-loss turns out to matter.
+contract can flag a disagreement; it shows up as an oddly-posed elbow. An
+EE-space variant of the checkpoint (whose action space *is* the lane's) is the
+fallback if the loss turns out to matter.
+
+The 2026-09-03 dry run found the first real cost of that round trip, and it was
+a frame convention rather than the DoF gap: their IK targets the bare
+`wrist_yaw_link` origin, while we published it translated 0.05 m along local +x
+— the offset our checkpoint was trained with. 5.00 cm on every pose, and IK
+accept held to 15-20% for the whole run. **The published pose now carries a zero
+offset and the model's state block keeps the 0.05 m**; those were one shared
+value, which made the obvious one-flag fix a trap. See INSTRUCTIONS.md §6.2.
 
 ## What runs where
 
@@ -101,11 +108,18 @@ holds whatever the link negotiates. The frames arrived as JPEG from the
 organizer's camera server in the first place, so this is a second generation of
 the same artefacts. `--jpeg-quality 0` sends raw; the server accepts either.
 
-Measured on the Orin rather than estimated: 56 KB per observation, 7-10 ms to
-encode all three frames. That is cheap enough that JPEG wins at any link speed
-— about 12 ms end to end on gigabit against ~22 ms for raw, and ~15 ms against
-~330 ms at 100 Mb/s. An earlier version of this file said raw would be faster
-on gigabit; that was arithmetic on an encode cost three times the real one.
+Measured on the Orin rather than estimated: 7-10 ms to encode all three frames,
+and 56 KB per observation — but that 56 KB is from `mock_orin`'s synthetic
+gradient frames, which compress far better than a real scene. Re-measured at
+q85: **54 KB for the mock pattern, 227 KB for textured content, 681 KB for
+noise**, against 2.7 MB raw. Real camera frames of a table build belong in the
+150-250 KB band, which is what `components/imagecodec.py` has always said.
+
+The conclusion is unchanged and does not depend on which number you take — at
+227 KB the link costs ~30 ms at 100 Mb/s against ~221 ms raw, so JPEG wins at
+any speed. Only the headline figure was optimistic. (An earlier version of this
+file said raw would be faster on gigabit; that was arithmetic on an encode cost
+three times the real one.)
 
 **No gripper state is published, and none can be.** The Dex1-1 rig means
 `:5557` carries no hand vector — and `boundary/states.py` types the optional
@@ -113,11 +127,52 @@ hand slots as `(7,)`, the Dex3 shape, rejecting anything else, so a 1-DoF jaw
 position has no schema-valid way through. Our 46-dim state has two gripper dims,
 fed from our own last command.
 
-Command and measurement agree while the gripper moves freely and diverge the
-moment it closes on something: the jaw stops at the object, our command does
-not, and the policy — trained on the measured position — reads "closed" while
-the hardware is holding a table leg. We have asked the organizer whether the
-value can reach us in any form (INSTRUCTIONS.md, open question 5).
+We checked what that substitution costs against the training set
+(`URL-RFM/IKEA_pickuptheleg`, 322 episodes / 149,437 frames), and it is far
+less than an earlier version of this file claimed. We said the loop breaks the
+moment the jaw closes on something — the jaw stalls at the object while our
+command keeps going. **The data contains no such regime.** The teleoperator
+commanded the grip *width* instead of slamming to zero: on `insert table leg to
+table base` the right-hand command sits at ~2.17 rad and the jaw at ~2.35, the
+leg's width, and never goes below 1.0 rad on that task at all.
+
+What it actually costs, over 148,793 same-episode frame pairs at the best lag
+(1 frame, correlation 0.9998): `|measured − command|` is 0.170 rad median on the
+left hand and 0.060 on the right, worst case 0.30 of a 5.40 rad stroke. And it
+is systematic, not random — the jaw cannot quite reach either end stop, so
+measured is an affine function of command. Fitting that per hand takes the left
+hand's median error to **0.008 rad**. That fit is now applied every step.
+
+The training rig's calibration is the right one to use even though we deploy on
+a different robot: we are not reproducing the competition jaw's true position,
+we are reproducing the number the checkpoint was trained to read.
+
+Two things the same analysis settled. The command scale endpoints are exactly
+right — the training action channels span `[0.0000, 5.4000]`, so 0 closed and
+5.40 open are the correct denominators. And the reset seed cannot be one
+number: each subtask starts from a different grasp state, `pick table leg`
+with both hands open (5.35 / 5.34), `insert table leg to table base` with the
+right already holding the leg (5.36 / 2.35), `rotate leg to tighten` with the
+left (0.17 / 5.34). It is now seeded per task from the prompt.
+
+**The policy does not start until the arms are where the demonstrations
+start.** The checkpoint's episodes begin from a recorded arm pose, per subtask,
+and the dry run sat ~1.0 rad away from it for its whole 11.4 minutes — 45% of
+the left arm's samples outside the training envelope. So the server ramps the
+jaws, dwells a second, ramps the arms at 0.35 rad/s, waits for 0.10 rad of joint
+error to hold for 0.3 s, and only then runs inference. About 4 s.
+
+The ramp is slow because *we do not set the joint velocity*: we publish poses,
+the organizer's adapter realises them, and their interpolator is what produced
+the rad/s shutdowns on 2026-09-03. At 0.35 rad/s a chunk asks for 0.012 rad per
+model row — seventeen times inside our own `MAX_ARM_STEP_RAD` gate — and ready
+chunks take the same gate, FK and encoding path a real inference does.
+`--no-ready-move` turns it off. On timeout it starts anyway and says so loudly:
+an attempt that never begins scores zero for certain.
+
+Only the upper body. Legs and waist have no channel in this lane, and the dry
+run was outside the training envelope on both for 100% of the run — that one is
+an ask, not a fix (INSTRUCTIONS.md §5).
 
 **A missing camera means hold still, not crash.** The checkpoint has no
 missing-view mode. A camera that drops after working reuses its last good frame
@@ -129,9 +184,10 @@ that has never seen one is worse than doing nothing.
 
 ```bash
 pip install -r requirements.txt
-python conformance.py --lane decoupled     # log: docs/conformance_decoupled.log
-scripts/check_boundary.sh                  # boundary/ unmodified
-scripts/dev_stack.sh                       # full loop, all three declared cameras
+python conformance.py --lane decoupled       # log: docs/conformance_decoupled.log
+scripts/check_boundary.sh                    # boundary/ unmodified
+python scripts/check_conventions.py          # the two silent invariants (below)
+scripts/dev_stack.sh                         # full loop, all three declared cameras
 ```
 
 ```bash
@@ -142,6 +198,13 @@ python scripts/contract_check.py --checkpoint /weights/<name>   # needs the weig
 action contract on the hold-still policy; `scripts/dev_stack.sh` covers the
 camera path; `scripts/contract_check.py` is the one that loads the real
 checkpoint, and it prints the peak GPU figure `manifest.yaml` wants.
+
+`scripts/check_conventions.py` needs no weights and covers the two mistakes
+nothing else can see, because both produce chunks that pass every contract
+check and merely make the robot worse: the model's state offset drifting with
+the wire offset, and an `--execute-rows` value whose resampled chunk overflows
+the contract's 64-row limit (40 model rows at 30→50 Hz resample to 66; 39
+fits at exactly 64 -- the server clamps rather than discovering it on the bench).
 
 ## Rehearsing on our own Thor and Orin
 
@@ -198,3 +261,15 @@ bench rather than assuming.
       digest images — 185 ms round trip, 320-340 ms of motion published per
       cycle (`docs/integration_thor_orin.log`), again on the previous
       checkpoint
+- [x] **Live dry run on the real G1, 2026-09-03** (organizer-run, four
+      shakedown attempts, none scored). Zero contract violations, zero rejected,
+      zero stale across all four; 2,222 chunks over 11.4 min of continuous
+      publishing at 304 ms median with no gap over 500 ms. Every crash was
+      organizer-side and is fixed on their end. **Ran the previous checkpoint** —
+      see INSTRUCTIONS.md §9 for what carries over.
+- [x] Tool-frame fix from that run: published pose at zero offset, model state
+      pinned at 0.05 m, the two no longer shareable. Validated by replaying
+      their `log.jsonl` — wire moves exactly 5.000 cm, state moves 0.000000 cm.
+- [ ] **Gripper channel to re-measure on the current checkpoint.** The dry run
+      found it never commands a close (INSTRUCTIONS.md §6.5); the cause is not
+      separable from the tool-frame bug on that data.

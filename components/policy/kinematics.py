@@ -8,17 +8,25 @@ silent:
     not recorded, so deployment has to recompute them identically or those 15
     inputs are noise -- ``state_dropout`` makes the policy robust to a missing
     state, not to a wrong one. Convention, which must not drift:
-    ``g1_body29_hand14.urdf``, **waist held at zero** so the pose is in the
-    torso frame, the ``wrist_yaw`` link origin translated 0.05 m along its
-    local +x, orientation as extrinsic-xyz Euler (URDF/ROS RPY).
+    ``g1_body29_hand14.urdf``, **waist held at zero** -- which is a
+    pelvis-origin pose with the waist locked, NOT a torso_link-origin pose;
+    torso_link sits a further 4.42 cm away at (-0.004, 0, 0.044) and the two
+    have been confused in prose before -- the ``wrist_yaw`` link origin
+    translated
+    ``TRAINING_EE_OFFSET_M`` along its local +x, orientation as extrinsic-xyz
+    Euler (URDF/ROS RPY).
 
   * The ACTION we publish on the decoupled lane is an end-effector pose for the
     organizer's IK adapter. That one wants the robot's actual pose, so it uses
-    the **measured waist** and returns a rotation matrix we turn into a w-first
-    quaternion without a detour through Euler angles.
+    the **measured waist** and ``ACTION_EE_OFFSET_M`` (zero -- their solver
+    targets the bare link origin), and returns a rotation matrix we turn into a
+    w-first quaternion without a detour through Euler angles.
 
 ``wrist_pose`` (state) and ``wrist_pose_matrix`` (action) therefore share a
-chain walk but not a waist policy. Both are exercised by conformance.
+chain walk but neither a waist policy nor a tool offset. Both are exercised by
+conformance. Build ONE ``G1WristKinematics`` per convention -- the URDF parse is
+cached, so the second instance is free -- and never route both consumers through
+the same offset.
 
 Adapted from url_groot_deploy/g1_kinematics.py, which is the file the training
 pipeline and the team's own Thor deployment already agree on.
@@ -34,8 +42,21 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 
 # Distance from the wrist_yaw link origin to the point the dataset calls the
-# end effector, along the link's local +x.
-DEFAULT_EE_OFFSET_M = 0.05
+# end effector, along the link's local +x. This is a property of the CHECKPOINT,
+# not a tuning knob: the 46-dim state's left_eef/right_eef blocks were computed
+# with it during training, so the observation path must keep it forever.
+TRAINING_EE_OFFSET_M = 0.05
+
+# What the organizer's IK adapter wants on the wire. It targets the raw
+# wrist_yaw_link origin with NO tool offset -- confirmed by the IAC evaluation
+# team on 2026-09-03, reversing their 2026-08-28 answer. Applying our training
+# offset here put every published pose 5.00 cm out and held IK accept to
+# 43.3% offline (100.0% with the offset removed, residual ~0).
+#
+# These two MUST stay separate. A single shared offset is what made
+# `--ee-offset-m 0` a trap: it fixes the wire and silently moves 6 of the 46
+# state dims 5 cm off the training distribution.
+ACTION_EE_OFFSET_M = 0.0
 
 DEFAULT_URDF = (
     Path(__file__).resolve().parents[2] / "assets" / "g1" / "g1_body29_hand14.urdf"
@@ -213,12 +234,19 @@ def _load_joints(urdf_path: str) -> Dict[str, tuple]:
 
 
 class G1WristKinematics:
-    """FK for both wrists off the pelvis, in the BCT dataset's convention."""
+    """FK for both wrists off the pelvis, in the BCT dataset's convention.
+
+    ``ee_offset_m`` is required and keyword-only on purpose. There is no safe
+    default: TRAINING_EE_OFFSET_M is right for the model's state and wrong on
+    the wire, ACTION_EE_OFFSET_M the other way round, and a default would let
+    the two be confused again by writing nothing at all.
+    """
 
     def __init__(
         self,
         urdf_path: Optional[Path] = None,
-        ee_offset_m: float = DEFAULT_EE_OFFSET_M,
+        *,
+        ee_offset_m: float,
     ):
         urdf = Path(urdf_path) if urdf_path is not None else DEFAULT_URDF
         if not urdf.is_file():
@@ -243,9 +271,11 @@ class G1WristKinematics:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Return (position (3,), rotation (3, 3)) of the end-effector point.
 
-        ``waist_q`` None means the waist is held at zero, i.e. the torso frame
-        the training pipeline used. Pass the measured waist to get the true
-        pelvis-frame pose, which is what an IK target wants.
+        ``waist_q`` None locks the waist at zero, which is the convention the
+        training pipeline used. Both branches are pelvis-origin: zeroing the
+        waist does not move the origin to ``torso_link``, which is a further
+        4.42 cm out. Pass the measured waist for where the wrist actually is,
+        which is what an IK target wants.
         """
         try:
             chain = _CHAIN[side]

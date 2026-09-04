@@ -19,10 +19,11 @@ server's contract is not the template's default:
      rows.
 
   2. RE-QUERY WHEN THE CHUNK RUNS OUT, not on a fixed timer. The server hands
-     back exactly the rows it wants executed before replanning (8 model rows
-     ≈ 0.27 s), so the natural period is the duration of what we just
-     published. A fixed 20 Hz re-query would ask for a new chunk five times
-     per chunk and throw four of them away.
+     back exactly the rows it wants executed before replanning (16 model rows
+     ≈ 0.53 s), so the natural period is the duration of what we just
+     published. A fixed 20 Hz re-query would ask for a new chunk several times
+     per chunk and throw the rest away. Measured on the 2026-09-03 dry run:
+     304 ms median between publishes, no gap over 500 ms in 11.4 minutes.
 
   3. DECOUPLED ONLY. Our checkpoint emits joint targets, not a SONIC latent.
      The sonic path is refused rather than left in as untested code.
@@ -63,9 +64,9 @@ from components.transport import PolicyLink  # noqa: E402
 
 LANE = "decoupled"
 DEFAULT_ROW_HZ = 50.0       # fallback if the server declares nothing
-# One of the five subtask strings the checkpoint was trained on. The policy
+# One of the three subtask strings the checkpoint was trained on. The policy
 # is language-conditioned, so this is a real input, not a label -- change it
-# per attempt with --prompt. components/policy/bct.py lists all five.
+# per attempt with --prompt. components/policy/bct.py lists all three.
 DEFAULT_PROMPT = "pick table leg"
 
 
